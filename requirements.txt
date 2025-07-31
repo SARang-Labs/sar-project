@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+rdkit
+google-generativeai
+joblib
+requests
+seaborn
+plotly
+openai
+Chem

@@ -45,10 +45,21 @@ def get_structural_difference_keyword(smiles1, smiles2):
     diff2_mol = Chem.ReplaceCore(mol2, mcs_mol)
 
     fragments = []
-    if diff1_mol:
-        fragments.extend(Chem.MolToSmiles(frag) for frag in Chem.GetMolFrags(diff1_mol, asMols=True))
-    if diff2_mol:
-        fragments.extend(Chem.MolToSmiles(frag) for frag in Chem.GetMolFrags(diff2_mol, asMols=True))
+    try:
+        if diff1_mol:
+            for frag in Chem.GetMolFrags(diff1_mol, asMols=True):
+                try:
+                    fragments.append(Chem.MolToSmiles(frag))
+                except:
+                    continue
+        if diff2_mol:
+            for frag in Chem.GetMolFrags(diff2_mol, asMols=True):
+                try:
+                    fragments.append(Chem.MolToSmiles(frag))
+                except:
+                    continue
+    except Exception:
+        pass
     
     # 간단한 작용기 이름으로 변환 (예시)
     if fragments:
@@ -65,6 +76,98 @@ def get_structural_difference_keyword(smiles1, smiles2):
         return "moiety modification"
         
     return "structural modification"
+
+def check_stereoisomers(smiles1, smiles2):
+    """두 SMILES가 입체이성질체인지 확인합니다."""
+    mol1 = Chem.MolFromSmiles(smiles1)
+    mol2 = Chem.MolFromSmiles(smiles2)
+    if not mol1 or not mol2:
+        return False
+    
+    # 2D 구조가 같고 3D 구조가 다르면 입체이성질체
+    canonical_1 = Chem.MolToSmiles(mol1, isomericSmiles=False)
+    canonical_2 = Chem.MolToSmiles(mol2, isomericSmiles=False)
+    isomeric_1 = Chem.MolToSmiles(mol1, isomericSmiles=True)
+    isomeric_2 = Chem.MolToSmiles(mol2, isomericSmiles=True)
+    
+    return canonical_1 == canonical_2 and isomeric_1 != isomeric_2
+
+def calculate_molecular_properties(mol):
+    """분자의 주요 물리화학적 특성을 계산합니다."""
+    if not mol:
+        return {}
+    
+    properties = {}
+    try:
+        properties['molecular_weight'] = Descriptors.MolWt(mol)
+        properties['logp'] = Descriptors.MolLogP(mol)
+        properties['hbd'] = Descriptors.NumHDonors(mol)
+        properties['hba'] = Descriptors.NumHAcceptors(mol)
+        properties['tpsa'] = Descriptors.TPSA(mol)
+        properties['rotatable_bonds'] = Descriptors.NumRotatableBonds(mol)
+        properties['aromatic_rings'] = Descriptors.NumAromaticRings(mol)
+        properties['heavy_atoms'] = mol.GetNumHeavyAtoms()
+        properties['formal_charge'] = Chem.rdmolops.GetFormalCharge(mol)
+    except Exception as e:
+        # 오류 발생 시 기본값들로 채움
+        properties = {
+            'molecular_weight': 0.0,
+            'logp': 0.0,
+            'hbd': 0,
+            'hba': 0,
+            'tpsa': 0.0,
+            'rotatable_bonds': 0,
+            'aromatic_rings': 0,
+            'heavy_atoms': 0,
+            'formal_charge': 0
+        }
+    
+    return properties
+
+def get_activity_cliff_summary(cliff_data):
+    """Activity Cliff 데이터의 요약 정보를 생성합니다."""
+    mol1 = cliff_data['mol_1']
+    mol2 = cliff_data['mol_2']
+    
+    # 더 활성이 높은 분자와 낮은 분자 구분
+    if mol1['pKi'] > mol2['pKi']:
+        high_active, low_active = mol1, mol2
+        high_props, low_props = cliff_data['mol1_properties'], cliff_data['mol2_properties']
+    else:
+        high_active, low_active = mol2, mol1
+        high_props, low_props = cliff_data['mol2_properties'], cliff_data['mol1_properties']
+    
+    summary = {
+        'high_activity_compound': {
+            'id': high_active['ID'],
+            'smiles': high_active['canonical_smiles'],
+            'pki': high_active['pKi'],
+            'properties': high_props
+        },
+        'low_activity_compound': {
+            'id': low_active['ID'],
+            'smiles': low_active['canonical_smiles'],
+            'pki': low_active['pKi'],
+            'properties': low_props
+        },
+        'cliff_metrics': {
+            'similarity': cliff_data['similarity'],
+            'activity_difference': cliff_data['activity_diff'],
+            'structural_difference_type': cliff_data['structural_difference'],
+            'is_stereoisomer_pair': cliff_data['is_stereoisomer'],
+            'same_scaffold': cliff_data['same_scaffold'],
+            'cliff_score': cliff_data['score']
+        },
+        'property_differences': {
+            'mw_diff': abs(high_props['molecular_weight'] - low_props['molecular_weight']),
+            'logp_diff': abs(high_props['logp'] - low_props['logp']),
+            'tpsa_diff': abs(high_props['tpsa'] - low_props['tpsa']),
+            'hbd_diff': abs(high_props['hbd'] - low_props['hbd']),
+            'hba_diff': abs(high_props['hba'] - low_props['hba'])
+        }
+    }
+    
+    return summary
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
 st.cache_data
@@ -112,10 +215,47 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
                 act_diff = abs(df['pKi'].iloc[i] - df['pKi'].iloc[j])
                 if act_diff >= activity_diff_threshold:
                     score = act_diff * (sim - similarity_threshold) * (1 if df['scaffold'].iloc[i] == df['scaffold'].iloc[j] else 0.5)
-                    # .to_dict()를 사용하여 Series를 딕셔너리로 변환
+                    
+                    # Activity Cliff 정보 강화
                     mol1_info = df.iloc[i].to_dict()
                     mol2_info = df.iloc[j].to_dict()
-                    cliffs.append({'mol_1': mol1_info, 'mol_2': mol2_info, 'similarity': sim, 'activity_diff': act_diff, 'score': score})
+                    
+                    # 표준 Isomeric SMILES 추가
+                    mol1_info['canonical_smiles'] = canonicalize_smiles(mol1_info['SMILES'])
+                    mol2_info['canonical_smiles'] = canonicalize_smiles(mol2_info['SMILES'])
+                    
+                    # 구조적 차이 키워드 추가 (안전한 처리)
+                    try:
+                        structural_diff = get_structural_difference_keyword(mol1_info['SMILES'], mol2_info['SMILES'])
+                    except:
+                        structural_diff = "구조적 차이 분석 불가"
+                    
+                    # 입체이성질체 여부 확인 (안전한 처리)
+                    try:
+                        is_stereoisomer = check_stereoisomers(mol1_info['SMILES'], mol2_info['SMILES'])
+                    except:
+                        is_stereoisomer = False
+                    
+                    # 분자 특성 계산 (안전한 처리)
+                    mol1_props = calculate_molecular_properties(df['mol'].iloc[i])
+                    mol2_props = calculate_molecular_properties(df['mol'].iloc[j])
+                    
+                    cliff_data = {
+                        'mol_1': mol1_info, 
+                        'mol_2': mol2_info, 
+                        'similarity': sim, 
+                        'activity_diff': act_diff, 
+                        'score': score,
+                        'structural_difference': structural_diff,
+                        'is_stereoisomer': is_stereoisomer,
+                        'mol1_properties': mol1_props,
+                        'mol2_properties': mol2_props,
+                        'same_scaffold': df['scaffold'].iloc[i] == df['scaffold'].iloc[j],
+                        'scaffold_1': df['scaffold'].iloc[i],
+                        'scaffold_2': df['scaffold'].iloc[j]
+                    }
+                    
+                    cliffs.append(cliff_data)
     
     cliffs.sort(key=lambda x: x['score'], reverse=True)
     return cliffs
@@ -162,37 +302,66 @@ def generate_hypothesis(cliff, target_name, api_key, llm_provider):
     if not api_key:
         return "사이드바에 API 키를 입력해주세요.", None
 
-    mol1_info, mol2_info = cliff['mol_1'], cliff['mol_2']
-    compound_a, compound_b = (mol1_info, mol2_info) if mol1_info['pKi'] < mol2_info['pKi'] else (mol2_info, mol1_info)
+    # 개선된 Activity Cliff 정보 활용
+    cliff_summary = get_activity_cliff_summary(cliff)
+    high_active = cliff_summary['high_activity_compound']
+    low_active = cliff_summary['low_activity_compound']
+    metrics = cliff_summary['cliff_metrics']
+    prop_diffs = cliff_summary['property_differences']
     
-    context_info = search_pubmed_for_context(compound_a['SMILES'], compound_b['SMILES'], target_name)
+    context_info = search_pubmed_for_context(high_active['smiles'], low_active['smiles'], target_name)
     rag_prompt_addition = f"\n\n**참고 문헌 정보:**\n- 제목: {context_info['title']}\n- 초록: {context_info['abstract']}\n\n위 참고 문헌의 내용을 바탕으로 가설을 생성해주세요." if context_info else ""
     
-    is_stereoisomer = (Chem.MolToSmiles(Chem.MolFromSmiles(compound_a['SMILES']), isomericSmiles=False) == Chem.MolToSmiles(Chem.MolFromSmiles(compound_b['SMILES']), isomericSmiles=False)) and (compound_a['SMILES'] != compound_b['SMILES'])
-    
-    # FIX: 입체이성질체일 경우, AI가 오해하지 않도록 프롬프트를 명확하게 수정
-    if is_stereoisomer:
+    # 입체이성질체 분석
+    if metrics['is_stereoisomer_pair']:
         prompt_addition = (
             "\n\n**중요 지침:** 이 두 화합물은 동일한 2D 구조를 가진 입체이성질체(stereoisomer)입니다. "
-            f"Tanimoto 유사도({cliff['similarity']:.3f})가 매우 높지만 1.00이 아닌 이유는 바로 이 3D 구조의 차이 때문입니다. "
+            f"Tanimoto 유사도({metrics['similarity']:.3f})가 매우 높지만 1.00이 아닌 이유는 바로 이 3D 구조의 차이 때문입니다. "
             "SMILES 문자열의 '@' 또는 '@@' 표기를 주목하여, 3D 공간 배열(입체화학)의 차이가 어떻게 이러한 활성 차이를 유발하는지 집중적으로 설명해주세요."
         )
     else:
-        prompt_addition = ""
+        prompt_addition = f"\n\n**구조적 차이 유형:** {metrics['structural_difference_type']}"
+    
+    # 물리화학적 특성 차이 정보 추가
+    props_info = f"""
+    **물리화학적 특성 차이:**
+    - 분자량 차이: {prop_diffs['mw_diff']:.2f} Da
+    - LogP 차이: {prop_diffs['logp_diff']:.2f}
+    - TPSA 차이: {prop_diffs['tpsa_diff']:.2f} Ų
+    - 수소결합 공여체 차이: {prop_diffs['hbd_diff']}개
+    - 수소결합 수용체 차이: {prop_diffs['hba_diff']}개
+    - 같은 스캐폴드: {'예' if metrics['same_scaffold'] else '아니오'}
+    """
 
     user_prompt = f"""
     **분석 대상:**
     - **화합물 A (낮은 활성):**
-      - ID: {compound_a['ID']}
-      - SMILES: {compound_a['SMILES']}
-      - 활성도 (pKi): {compound_a['pKi']:.2f}
+      - ID: {low_active['id']}
+      - 표준 SMILES: {low_active['smiles']}
+      - 활성도 (pKi): {low_active['pki']:.2f}
+      - 분자량: {low_active['properties']['molecular_weight']:.2f} Da
+      - LogP: {low_active['properties']['logp']:.2f}
+      - TPSA: {low_active['properties']['tpsa']:.2f} Ų
+    
     - **화합물 B (높은 활성):**
-      - ID: {compound_b['ID']}
-      - SMILES: {compound_b['SMILES']}
-      - 활성도 (pKi): {compound_b['pKi']:.2f}
+      - ID: {high_active['id']}
+      - 표준 SMILES: {high_active['smiles']}
+      - 활성도 (pKi): {high_active['pki']:.2f}
+      - 분자량: {high_active['properties']['molecular_weight']:.2f} Da
+      - LogP: {high_active['properties']['logp']:.2f}
+      - TPSA: {high_active['properties']['tpsa']:.2f} Ų
+    
+    **Activity Cliff 메트릭:**
+    - Tanimoto 유사도: {metrics['similarity']:.3f}
+    - 활성도 차이 (ΔpKi): {metrics['activity_difference']:.2f}
+    - Cliff 점수: {metrics['cliff_score']:.3f}
+    
+    {props_info}
+    
     **분석 요청:**
-    두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.3f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.
-    이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 설명해주세요.{prompt_addition}{rag_prompt_addition}
+    두 화합물은 구조적으로 매우 유사하지만, 활성도에서 큰 차이를 보이는 전형적인 'Activity Cliff' 사례입니다.
+    위의 상세한 분자 정보와 물리화학적 특성을 종합적으로 분석하여, **이러한 활성도 차이를 유발하는** 핵심적인 구조적 요인과 그 메커니즘에 대한 과학적 가설을 제시해주세요.
+    특히 타겟 단백질 {target_name}와의 상호작용 관점에서 설명해주세요.{prompt_addition}{rag_prompt_addition}
     """
 
     try:

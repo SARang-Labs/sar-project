@@ -15,30 +15,54 @@ import streamlit as st
 from openai import OpenAI
 from utils import search_pubmed_for_context, get_activity_cliff_summary
 
+class UnifiedLLMClient:
+    """통합 LLM 클라이언트"""
+    
+    def __init__(self, api_key: str, llm_provider: str = "OpenAI"):
+        self.llm_provider = llm_provider
+        if llm_provider == "OpenAI":
+            self.client = OpenAI(api_key=api_key)
+            self.model = "gpt-4o"
+        elif llm_provider in ["Gemini", "Google Gemini"]:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            self.client = genai.GenerativeModel("gemini-2.5-pro")
+            self.model = "gemini-2.5-pro"
+        else:
+            raise ValueError(f"지원하지 않는 LLM 공급자: {llm_provider}")
+    
+    def generate_response(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
+        """통합 응답 생성"""
+        if self.llm_provider == "OpenAI":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=temperature
+            )
+            return response.choices[0].message.content
+        elif self.llm_provider in ["Gemini", "Google Gemini"]:
+            full_prompt = f"{system_prompt}\n\n{user_prompt}"
+            response = self.client.generate_content(full_prompt)
+            return response.text
+        else:
+            raise ValueError(f"지원하지 않는 LLM 공급자: {self.llm_provider}")
+
 
 class StructuralChemistryExpert:
     """구조화학 전문가 에이전트"""
     
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
+    def __init__(self, llm_client: UnifiedLLMClient):
+        self.llm_client = llm_client
         self.persona = """당신은 20년 경력의 선임 약화학자로, 분자 구조와 전자적 특성 변화 분석의 전문가입니다.
         특히 분자 기하학, SMILES 구조 차이점, 화학적 직관과 구조-기능 관계 규명에 특화되어 있습니다."""
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """구조화학 관점의 가설 생성"""
         prompt = self._build_structural_prompt(shared_context)
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.persona},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        
-        hypothesis = response.choices[0].message.content
+        hypothesis = self.llm_client.generate_response(self.persona, prompt, temperature=0.7)
         
         return {
             'agent_type': 'structural_chemistry',
@@ -234,26 +258,15 @@ class StructuralChemistryExpert:
 class BiomolecularInteractionExpert:
     """생체분자 상호작용 전문가 에이전트"""
     
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
+    def __init__(self, llm_client: UnifiedLLMClient):
+        self.llm_client = llm_client
         self.persona = """당신은 단백질-리간드 상호작용 메커니즘 분야의 세계적 권위자입니다.
         타겟 단백질과의 결합 방식 변화, 약리학적 관점과 생리활성 메커니즘 규명을 전문으로 합니다."""
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """생체분자 상호작용 관점의 가설 생성"""
         prompt = self._build_interaction_prompt(shared_context)
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.persona},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        
-        hypothesis = response.choices[0].message.content
+        hypothesis = self.llm_client.generate_response(self.persona, prompt, temperature=0.7)
         
         return {
             'agent_type': 'biomolecular_interaction',
@@ -448,26 +461,15 @@ class BiomolecularInteractionExpert:
 class SARIntegrationExpert:
     """SAR 통합 전문가 에이전트"""
     
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
+    def __init__(self, llm_client: UnifiedLLMClient):
+        self.llm_client = llm_client
         self.persona = """당신은 화학정보학과 신약 개발 파이프라인의 실무 전문가입니다.
         SAR 분석 최적화, 신약 개발 전략 제시, 최신 화학정보학 기법 통합이 전문 분야입니다."""
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """SAR 통합 관점의 가설 생성"""
         prompt = self._build_sar_prompt(shared_context)
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.persona},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        
-        hypothesis = response.choices[0].message.content
+        hypothesis = self.llm_client.generate_response(self.persona, prompt, temperature=0.7)
         
         return {
             'agent_type': 'sar_integration',
@@ -1631,9 +1633,8 @@ class MetaReviewAgent:
 class HypothesisEvaluationExpert:
     """가설 평가 전문가 에이전트 - shared_context를 완전히 활용한 맥락 기반 평가"""
     
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
+    def __init__(self, llm_client: UnifiedLLMClient):
+        self.llm_client = llm_client
         self.persona = """당신은 15년 경력의 SAR 분석 평가 전문가입니다.
         Activity Cliff 분석, 가설 검증, 과학적 엄밀성 평가에 특화되어 있으며,
         실제 데이터와 문헌 근거를 바탕으로 객관적이고 일관된 평가를 수행합니다."""
@@ -1706,16 +1707,11 @@ class HypothesisEvaluationExpert:
     """
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.persona},
-                    {"role": "user", "content": evaluation_prompt}
-                ],
+            response_text = self.llm_client.generate_response(
+                self.persona, 
+                evaluation_prompt, 
                 temperature=0.3
-            )
-            
-            response_text = response.choices[0].message.content.strip()
+            ).strip()
             
             # JSON 추출
             json_start = response_text.find('{')
@@ -1786,13 +1782,16 @@ def display_expert_result(result: Dict):
 
 
 # 메인 온라인 토론 시스템 함수
-def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key: str) -> Dict:
+def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key: str, llm_provider: str = "OpenAI") -> Dict:
     """단순화된 Co-Scientist 방법론 기반 가설 생성 시스템"""
     
     start_time = time.time()
     
+    # 통합 LLM 클라이언트 생성
+    llm_client = UnifiedLLMClient(api_key, llm_provider)
+    
     st.markdown("**Co-Scientist 방법론 기반 SAR 분석**")
-    st.markdown("3명의 전문가 AI가 독립적으로 분석한 후 상호 평가를 통해 최고 품질의 가설을 생성합니다.")
+    st.markdown(f"3명의 전문가 Agent가 독립적으로 분석한 후 상호 평가를 통해 최고 품질의 가설을 생성합니다.")
     
     # Phase 1: 데이터 준비 + RAG 통합
     st.info("**Phase 1: 데이터 준비** - RAG 통합 컨텍스트 구성")
@@ -1818,14 +1817,14 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     # Phase 2: Generation - 3개 전문가 독립 분석
     st.markdown("---")
     st.info("**Phase 2: Generation** - 3명의 전문가 Agent가 각자의 관점에서 독립적으로 가설을 생성합니다")
-    domain_hypotheses = generation_phase(shared_context, api_key)
+    domain_hypotheses = generation_phase(shared_context, llm_client)
     
     # Phase 3: 전문가 기반 평가 및 순위 매김
     st.markdown("---")
     st.info("**Phase 3: 전문가 평가** - 평가 전문 Agent가 Activity Cliff 데이터와 문헌 근거를 바탕으로 가설을 평가합니다")
     
     # 평가 전문가 에이전트 초기화
-    evaluator = HypothesisEvaluationExpert(api_key)
+    evaluator = HypothesisEvaluationExpert(llm_client)
     evaluated_hypotheses = []
     
     progress_bar = st.progress(0)
@@ -2020,12 +2019,12 @@ def prepare_shared_context(selected_cliff: Dict, target_name: str) -> Dict:
     return shared_context
 
 
-def generation_phase(shared_context: Dict, api_key: str) -> List[Dict]:
+def generation_phase(shared_context: Dict, llm_client: UnifiedLLMClient) -> List[Dict]:
     """3개 도메인 전문가 순차 실행 (간소화 버전)"""
     experts = [
-        StructuralChemistryExpert(api_key),
-        BiomolecularInteractionExpert(api_key),
-        SARIntegrationExpert(api_key)
+        StructuralChemistryExpert(llm_client),
+        BiomolecularInteractionExpert(llm_client),
+        SARIntegrationExpert(llm_client)
     ]
     
     domain_hypotheses = []

@@ -32,14 +32,16 @@ class OptimalPromptDebateInterface:
     def show_interface(self, activity_cliff: Dict, context_info: Dict = None, target_name: str = ""):
         """최적 프롬프트 토론 인터페이스 표시"""
         
-        # API 키 설정
-        api_keys = self._get_api_keys()
-        if not self._validate_api_keys(api_keys):
-            st.error("API 키를 모두 입력해주세요.")
+        # 사이드바에서 LLM 설정 가져오기
+        llm_provider = st.session_state.get('llm_provider', 'OpenAI')
+        api_key = st.session_state.get('api_key', '')
+        
+        if not api_key:
+            st.error(f"{llm_provider} API 키를 사이드바에서 입력해주세요.")
             return
         
-        # 에이전트 설정
-        self.debate_manager.setup_agents(api_keys)
+        # 선택된 단일 모델로 에이전트 설정
+        self.debate_manager.setup_agents_unified(llm_provider, api_key)
         
         # 토론 실행 버튼
         if st.button("최적 프롬프트 토론 시작", type="primary"):
@@ -62,20 +64,6 @@ class OptimalPromptDebateInterface:
                 # 결과 표시
                 self._display_debate_results(debate_result)
     
-    def _get_api_keys(self) -> Dict[str, str]:
-        """API 키 입력 받기"""
-        st.sidebar.markdown("## 🔑 API 키 설정")
-        
-        api_keys = {}
-        api_keys["openai"] = st.sidebar.text_input("OpenAI API Key", type="password")
-        api_keys["gemini"] = st.sidebar.text_input("Google Gemini API Key", type="password")
-        api_keys["futurehouse"] = st.sidebar.text_input("FutureHouse API Key", type="password")
-        
-        return api_keys
-    
-    def _validate_api_keys(self, api_keys: Dict[str, str]) -> bool:
-        """API 키 유효성 검증"""
-        return all(api_keys.values())
     
     def _display_debate_results(self, debate_result: OptimalPromptDebateState):
         """토론 결과 전체 표시"""

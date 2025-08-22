@@ -14,7 +14,6 @@ import json
 from ..agents.base_agent import BaseAgent
 from ..agents.structural_agent import StructuralAgent
 from ..agents.biological_agent import BiologicalAgent
-from ..agents.futurehouse_agent import FutureHouseAgent
 
 @dataclass
 class InitialPromptWithHypothesis:
@@ -84,31 +83,41 @@ class OptimalPromptDebateManager:
         self.agents: Dict[str, BaseAgent] = {}
         self.debate_topic = "자동화된 지능형 SAR 분석 시스템을 위한 최적 근거 중심 가설 생성 방법론 확립"
     
-    def setup_agents(self, api_keys: Dict[str, str]):
-        """3개 에이전트 설정"""
-        # FutureHouse 모델명 설정 (기본값: crow)
-        futurehouse_model = api_keys.get("futurehouse_model", "crow")
+    def setup_agents_unified(self, llm_provider: str, api_key: str):
+        """선택된 단일 LLM으로 3개 에이전트 통일 설정"""
+        if llm_provider == "OpenAI":
+            model_provider = "openai"
+            model_name = "gpt-4o"
+        elif llm_provider in ["Gemini", "Google Gemini"]:
+            model_provider = "gemini"
+            model_name = "gemini-2.5-pro"  # 최신 최고 성능 모델
+        else:
+            raise ValueError(f"지원하지 않는 LLM 공급자: {llm_provider}")
         
+        # 모든 에이전트를 선택된 단일 모델로 통일
         self.agents = {
             "structural": StructuralAgent(
-                model_provider="openai",
-                model_name="gpt-4o",
-                api_key=api_keys.get("openai"),
+                model_provider=model_provider,
+                model_name=model_name,
+                api_key=api_key,
                 temperature=0.3
             ),
             "biological": BiologicalAgent(
-                model_provider="gemini",
-                model_name="gemini-2.0-flash",
-                api_key=api_keys.get("gemini"),
+                model_provider=model_provider,
+                model_name=model_name,
+                api_key=api_key,
                 temperature=0.3
             ),
-            "sar": FutureHouseAgent(
-                model_provider="futurehouse",
-                model_name=futurehouse_model,
-                api_key=api_keys.get("futurehouse"),
+            "sar": BiologicalAgent(  # FutureHouseAgent 대신 BiologicalAgent 사용
+                model_provider=model_provider,
+                model_name=model_name,
+                api_key=api_key,
                 temperature=0.3
             )
         }
+        
+        # SAR 에이전트의 전문성을 SAR로 변경
+        self.agents["sar"].expertise = "구조-활성 관계 (SAR) 통합"
     
     def run_optimal_prompt_debate(self, 
                                  activity_cliff: Dict, 

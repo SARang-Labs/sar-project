@@ -49,10 +49,14 @@ with st.sidebar:
     st.header("⚙️ AI 모델 설정")
     target_name = st.text_input("분석 대상 타겟 단백질 (예: EGFR)", value="EGFR")
     
-    llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Gemini"))
+    llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Google Gemini"))
     
     api_key_placeholder = "OpenAI API 키 (sk-...)" if llm_provider == "OpenAI" else "Gemini API 키"
     api_key = st.text_input("API 키 입력:", type="password", placeholder=api_key_placeholder)
+    
+    # 세션 상태에 저장 (다른 탭에서 사용하기 위해)
+    st.session_state['llm_provider'] = llm_provider
+    st.session_state['api_key'] = api_key
 
 st.header("분석 결과 대시보드")
 
@@ -203,15 +207,13 @@ if df is not None:
                         
                         # API 키 확인
                         if not api_key:
-                            st.warning("⚠️ 사이드바에서 OpenAI API 키를 입력해주세요.")
-                        elif llm_provider != "OpenAI":
-                            st.warning("⚠️ 온라인 토론 시스템은 현재 OpenAI GPT-4o만 지원합니다. 사이드바에서 OpenAI를 선택해주세요.")
+                            st.warning(f"⚠️ 사이드바에서 {llm_provider} API 키를 입력해주세요.")
                         else:
                             # 온라인 토론 시작 버튼
                             if st.button("5단계 온라인 토론 시작", type="primary", key="start_online_discussion_adv"):
                                 try:
-                                    # 비동기 함수 실행
-                                    final_report = run_online_discussion_system(selected_cliff, target_name, api_key)
+                                    # 비동기 함수 실행 (사이드바 LLM 설정 전달)
+                                    final_report = run_online_discussion_system(selected_cliff, target_name, api_key, llm_provider)
                                     st.session_state['discussion_report_advanced'] = final_report
                                 except Exception as e:
                                     st.error(f"❌ 온라인 토론 중 오류가 발생했습니다: {str(e)}")
@@ -356,13 +358,13 @@ if df is not None:
                     
                     # 고급 분석 시스템 안내
                     st.markdown("---")
-                    st.markdown("#### 고급 AI 분석 시스템")
+                    st.markdown("#### 시스템 안내")
                     
                     if ONLINE_DISCUSSION_AVAILABLE:
-                        st.info("🎯 **온라인 토론 시스템**: 5단계 Co-Scientist 방법론으로 3명의 전문가 AI가 토론하여 최고 품질의 가설을 생성합니다.")
+                        st.info("**온라인 토론 시스템**: 5단계 Co-Scientist 방법론으로 3명의 전문가 Agent가 토론하여 최고 품질의 가설을 생성합니다.")
                     
                     if PROMPT_SYSTEM_AVAILABLE:
-                        st.info("💡 **최적 프롬프트 토론**: 전문가 AI가 토론을 통해 최적의 프롬프트와 가설을 생성합니다.")
+                        st.info("**최적 프롬프트 토론**: 전문가 AI가 토론을 통해 최적의 프롬프트와 가설을 생성합니다.")
 
     # ==================== 최적 프롬프트 토론 시스템 탭 ====================
     if PROMPT_SYSTEM_AVAILABLE and tab_prompt is not None:
@@ -389,7 +391,7 @@ if df is not None:
                 st.info("**시작 방법:**")
                 st.markdown("""
                 1. **첫 번째 탭**에서 Activity Cliff를 선택하세요
-                2. **이 탭**에서 3명의 전문가 AI가 토론을 통해 최적의 프롬프트를 생성합니다
+                2. **이 탭**에서 3명의 전문가 Agent가 토론을 통해 최적의 프롬프트를 생성합니다
                 3. **결과**로 최고 품질의 프롬프트와 가설을 얻게 됩니다
                 
                 **토론 과정:**

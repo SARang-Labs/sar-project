@@ -175,9 +175,9 @@ class StructuralChemistryExpert:
         4. 활성 변화 연결: [정량적 구조-활성 관계 설명]
         5. 추가 실험 제안: [구체적 프로토콜과 예상 결과]
         
-        분자 설계 제안: [후속 화합물의 구체적 구조 변경 전략]
+        분자 설계 제안: [후속 화합물의 구체적 구조 변경 전략 - pKi 예측값 언급 금지]
         
-        **중요: 모든 설명은 구체적 수치, 특정 분자 부위, 명확한 메커니즘을 포함해야 하며, '~일 것이다', '~로 추정된다' 같은 모호한 표현보다는 과학적 근거에 기반한 확정적 분석을 제시하세요.**
+        **중요: 전문가가 알고 있을 뻔한 기본 내용은 피하고, 실질적이고 깊이 있는 구조생물학적 통찰을 제공하세요. 구체적 수치, 특정 분자 부위, 명확한 메커니즘을 포함하되 예상 pKi 값은 언급하지 마세요.**
         """
     
     def _extract_confidence_from_text(self, hypothesis: str) -> float:
@@ -380,9 +380,9 @@ class BiomolecularInteractionExpert:
         4. 약리학적 메커니즘: [Ki/Kd 값 예측, 선택성 비율 계산]
         5. ADMET 영향: [CYP 대사, 혈장 단백질 결합률의 구체적 예측]
         
-        분자 설계 제안: [특정 치환기 도입 전략과 예상 친화도 개선]
+        분자 설계 제안: [특정 치환기 도입 전략 - pKi 예측값 언급 금지]
         
-        **중요: 결합 친화도, 상호작용 에너지, 특정 아미노산 잔기 번호를 포함한 정량적 분석을 제시하고, 실제 구조생물학 데이터에 기반한 구체적 메커니즘을 설명하세요.**
+        **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 친화도, 상호작용 에너지, 특정 아미노산 잔기 번호를 포함한 정량적 분석을 제시하되 예상 pKi 값은 언급하지 마세요.**
         """
     
     def _extract_confidence_from_text(self, hypothesis: str) -> float:
@@ -562,14 +562,16 @@ class SARIntegrationExpert:
         
         **필수 요구사항 - 신약개발 전문가 수준:**
         1. 정량적 QSAR 모델 제시 (R² 값, 방정식 등)
-        2. 후속 화합물 3-5개의 구체적 구조와 예상 활성값
+        2. 후속 화합물 3-5개의 구체적 구조 (예상 활성값 제외)
         3. 합성 가능성과 비용 추정 (FTE, 비용 등)
         4. 치환기별 기여도 순위 (Hammett 상수 활용)
         5. 특허 회피 전략과 경쟁사 분석
         
+        **중요: 전문가 수준에서 뻔한 기본 내용은 피하고, 실질적이고 혁신적인 데이터 분석 접근법에 집중하세요.**
+        
         **금지 사항 - 추상적 전략 금지:**
         - "최적화가 필요하다" → "구체적 최적화 단계와 타겟 구조"
-        - "비슷한 화합물" → "완전한 SMILES 구조와 예상 pKi 값"
+        - "비슷한 화합물" → "완전한 SMILES 구조 (pKi 값 예측 금지)"
         - "개선이 기대된다" → "정량적 개선 예측과 성공 확률"
         
         **실제 제약회사에서 사용할 수 있는 구체적 데이터와 전략을 제시하여 즉시 실행 가능한 액션 플랜을 작성하세요.**
@@ -587,11 +589,11 @@ class SARIntegrationExpert:
         4. 최적화 방향: [특정 치환기의 정량적 기여도와 다음 합성 타겟]
         5. 예측 모델링: [Random Forest/SVM 모델의 예측 정확도와 신뢰구간]
         
-        분자 설계 제안: [구체적 구조식과 예상 활성값을 포함한 차세대 화합물 3-5개]
+        분자 설계 제안: [구체적 구조식을 포함한 차세대 화합물 3-5개 - pKi 예측값 제외]
         
         실험 제안: [합성 경로, 활성 측정 프로토콜, 예상 비용과 기간]
         
-        **중요: 정량적 QSAR 관계식, 구체적 치환기 효과, 예측 활성값을 포함하여 실제 제약회사에서 사용할 수 있는 수준의 구체적 전략을 제시하세요.**
+        **중요: 정량적 QSAR 관계식, 구체적 치환기 효과를 포함하여 실제 제약회사에서 사용할 수 있는 수준의 구체적 전략을 제시하되, pKi 예측값은 포함하지 마세요. 전문가가 이미 알고 있는 뻔한 내용은 피하세요.**
         """
     
     def _extract_confidence_from_text(self, hypothesis: str) -> float:
@@ -667,6 +669,8 @@ class SARIntegrationExpert:
         return steps[:5]
 
 
+# DEPRECATED: ReflectionAgent 클래스 - 사용하지 않음
+# HypothesisEvaluationExpert 클래스로 대체됨
 class ReflectionAgent:
     """가설 타당성 평가 에이전트"""
     
@@ -674,21 +678,22 @@ class ReflectionAgent:
         self.client = OpenAI(api_key=api_key)
         self.model = "gpt-4o"
         
-    def evaluate_hypotheses(self, domain_hypotheses: List[Dict], shared_context: Dict) -> List[Dict]:
-        """각 가설의 타당성을 종합적으로 평가"""
+    def evaluate_hypotheses(self, domain_hypotheses: List[Dict], shared_context: Dict) -> Dict:
+        """모든 가설을 종합 평가하고 최종 리포트 생성"""
         
-        st.info("🤔 **Phase 3: Reflection** - 가설 타당성 평가 및 피드백 생성중...")
+        st.info("**Phase 3: 종합 평가** - 전체 가설의 장점을 통합하여 최종 리포트를 생성합니다")
         
-        evaluation_results = []
+        # 각 가설의 개별 강점과 약점 분석
+        individual_evaluations = []
         
         for i, hypothesis in enumerate(domain_hypotheses):
-            with st.spinner(f"{hypothesis['agent_name']} 가설 평가 중..."):
-                evaluation_prompt = self._build_evaluation_prompt(hypothesis, shared_context)
+            with st.spinner(f"{hypothesis['agent_name']} 가설 분석 중..."):
+                evaluation_prompt = self._build_individual_evaluation_prompt(hypothesis, shared_context)
                 
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": "당신은 과학적 가설 평가 전문가입니다. 객관적이고 건설적인 평가를 제공합니다."},
+                        {"role": "system", "content": "당신은 과학적 가설 분석 전문가입니다. 각 가설의 강점과 약점을 객관적으로 분석합니다."},
                         {"role": "user", "content": evaluation_prompt}
                     ],
                     temperature=0.3
@@ -696,56 +701,146 @@ class ReflectionAgent:
                 
                 evaluation_text = response.choices[0].message.content
                 
-                # 평가 점수 파싱
-                scores = self._parse_evaluation_scores(evaluation_text)
-                
                 result = {
                     'hypothesis_id': i,
                     'agent_name': hypothesis['agent_name'],
                     'original_hypothesis': hypothesis,
                     'evaluation_text': evaluation_text,
-                    'scores': scores,
-                    'feedback': self._extract_feedback(evaluation_text),
                     'strengths': self._extract_strengths(evaluation_text),
                     'weaknesses': self._extract_weaknesses(evaluation_text),
+                    'key_insights': self._extract_key_insights(evaluation_text),
                     'timestamp': time.time()
                 }
                 
-                evaluation_results.append(result)
+                individual_evaluations.append(result)
                 
-                # 평가 결과 즉시 표시
-                self._display_reflection_result(result)
+                # 개별 분석 결과 간단히 표시
+                with st.expander(f"📝 {result['agent_name']} 분석 요약", expanded=False):
+                    if result['strengths']:
+                        st.write("**주요 강점:**")
+                        for strength in result['strengths'][:2]:
+                            st.write(f"• {strength}")
         
-        return evaluation_results
+        # 종합 리포트 생성
+        # st.info("📋 **최종 종합 리포트 작성 중...**")
+        final_report = self._generate_comprehensive_report(individual_evaluations, shared_context)
+        
+        return final_report
     
-    def _build_evaluation_prompt(self, hypothesis: Dict, shared_context: Dict) -> str:
-        """평가용 프롬프트 구성"""
+    def _build_individual_evaluation_prompt(self, hypothesis: Dict, shared_context: Dict) -> str:
+        """개별 가설 분석용 프롬프트 구성"""
         return f"""
-        **가설 평가 요청:**
+        **가설 분석 요청:**
         
         **전문가:** {hypothesis['agent_name']}
         **가설 내용:**
         {hypothesis['hypothesis']}
         
-        **원본 신뢰도:** {hypothesis['confidence']:.0%}
+        **분석 요청:**
+        이 가설의 강점, 약점, 핵심 인사이트를 객관적으로 분석해주세요:
         
-        **평가 요청:**
-        다음 기준으로 이 가설을 객관적으로 평가해주세요:
+        **분석 형식:**
+        강점: [신뢰할 수 있고 가치 있는 부분들 2-3개]
+        약점: [개선이 필요한 부분들 1-2개]
+        핵심 인사이트: [이 가설에서 얻을 수 있는 중요한 통찰 1-2개]
         
-        1. **과학적 엄밀성** (Scientific Rigor): 논리적 일관성, 과학적 근거
-        2. **증거 통합** (Evidence Integration): 데이터와 문헌 활용도
-        3. **실용성** (Practical Applicability): 실제 적용 가능성
-        4. **혁신성** (Innovation): 새로운 인사이트 제공
-        
-        **평가 형식:**
-        점수: [각 기준별 0-100점]
-        강점: [2-3개 항목]
-        약점: [1-2개 항목] 
-        개선 제안: [구체적 피드백]
-        총평: [종합 평가]
-        
-        객관적이고 건설적인 평가를 부탁드립니다.
+        객관적이고 구체적인 분석을 부탁드립니다.
         """
+    
+    def _generate_comprehensive_report(self, individual_evaluations: List[Dict], shared_context: Dict) -> Dict:
+        """모든 가설의 강점을 통합하여 최종 종합 리포트 생성"""
+        
+        # 모든 가설의 강점과 인사이트 수집
+        all_strengths = []
+        all_insights = []
+        all_hypotheses_text = []
+        
+        for eval_result in individual_evaluations:
+            all_strengths.extend(eval_result.get('strengths', []))
+            all_insights.extend(eval_result.get('key_insights', []))
+            all_hypotheses_text.append(f"**{eval_result['agent_name']}**: {eval_result['original_hypothesis']['hypothesis']}")
+        
+        # 가장 우수한 가설 선정 (강점이 가장 많은 것)
+        best_evaluation = max(individual_evaluations, key=lambda x: len(x.get('strengths', [])))
+        remaining_evaluations = [eval_result for eval_result in individual_evaluations if eval_result != best_evaluation]
+        
+        # 종합 리포트 생성 프롬프트
+        synthesis_prompt = f"""
+        **최종 종합 리포트 작성 요청:**
+        
+        다음은 3명의 전문가가 제시한 가설들입니다:
+        1. **{best_evaluation['agent_name']} (채택된 주요 가설)**: {best_evaluation['original_hypothesis']['hypothesis'][:500]}...
+        2. **{remaining_evaluations[0]['agent_name']}**: {remaining_evaluations[0]['original_hypothesis']['hypothesis'][:200]}...
+        3. **{remaining_evaluations[1]['agent_name']}**: {remaining_evaluations[1]['original_hypothesis']['hypothesis'][:200]}...
+        
+        **{best_evaluation['agent_name']} 가설의 주요 강점:**
+        {chr(10).join([f"• {strength}" for strength in best_evaluation.get('strengths', [])[:4]])}
+        
+        **다른 가설들의 보완 강점:**
+        {chr(10).join([f"• {strength}" for strength in all_strengths[:6] if strength not in best_evaluation.get('strengths', [])])}
+        
+        **작성 지침:**
+        1. **{best_evaluation['agent_name']} 가설을 주요 베이스로 사용**하되, 다른 가설의 우수한 부분으로 보완하세요
+        2. 구체적이고 전문적인 내용을 유지하고, 일반적인 설명은 피하세요
+        3. 각 전문가의 고유한 관점과 전문성을 존중하여 작성하세요
+        
+        **작성 형식:**
+        ### 최종 가설 제안
+        **주요 베이스: {best_evaluation['agent_name']}의 분석**
+        
+        **1. 구조적 차이점 분석**
+        [{best_evaluation['agent_name']}의 구조 분석을 중심으로, 다른 전문가들의 보완 관점을 통합한 완성된 분석]
+        
+        **2. 작용 기전 가설**
+        [생물학적 메커니즘에 대한 구체적이고 근거 있는 설명]
+        
+        **3. 실험적 근거 및 검증**
+        [가설을 뒷받침하는 실험적 근거와 추가 검증 방법]
+        
+        **4. 분자 설계 제안**
+        [구체적 구조 변경 전략 및 최적화 방향 - pKi 예측값 제외]
+        [제안 화합물들의 완성된 SMILES 코드 3-5개 포함]
+        
+        **5. 신뢰도 평가**
+        [이 가설의 신뢰도와 한계점에 대한 객관적 평가]
+        
+        ### 추가 고려 가설
+        
+        **{remaining_evaluations[0]['agent_name']}의 대안 접근법:**
+        [{remaining_evaluations[0]['agent_name']}의 가설 핵심 내용을 2-3문장으로 요약]
+        
+        **{remaining_evaluations[1]['agent_name']}의 보완 관점:**
+        [{remaining_evaluations[1]['agent_name']}의 가설 핵심 내용을 2-3문장으로 요약]
+        
+        **주의**: 각 전문가의 독창적 분석과 구체적 제안사항을 유지하세요. 일반론은 제외하세요.
+        
+        **SMILES 코드 요구사항**: 분자 설계 제안에서 반드시 다음을 포함하세요:
+        - 제안 화합물 1: [설명] - SMILES: [완성된 SMILES 코드]
+        - 제안 화합물 2: [설명] - SMILES: [완성된 SMILES 코드]  
+        - 제안 화합물 3: [설명] - SMILES: [완성된 SMILES 코드]
+        (필요시 최대 5개까지)
+        """
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "당신은 SAR 분석 종합 전문가입니다. 여러 전문가의 의견을 통합하여 최고 품질의 종합 리포트를 작성합니다."},
+                {"role": "user", "content": synthesis_prompt}
+            ],
+            temperature=0.2
+        )
+        
+        final_hypothesis = response.choices[0].message.content
+        
+        return {
+            'final_hypothesis': final_hypothesis,
+            'individual_evaluations': individual_evaluations,
+            'synthesis_metadata': {
+                'total_strengths_considered': len(all_strengths),
+                'total_insights_integrated': len(all_insights),
+                'synthesis_timestamp': time.time()
+            }
+        }
     
     def _parse_evaluation_scores(self, evaluation_text: str) -> Dict[str, float]:
         """평가 텍스트에서 점수 추출 - 개선된 파싱 로직"""
@@ -850,6 +945,30 @@ class ReflectionAgent:
                 break
         
         return weaknesses[:2]  # 최대 2개
+    
+    def _extract_key_insights(self, evaluation_text: str) -> List[str]:
+        """평가 텍스트에서 핵심 인사이트 추출"""
+        insights = []
+        lines = evaluation_text.split('\n')
+        
+        in_insights_section = False
+        for line in lines:
+            line = line.strip()
+            if any(keyword in line.lower() for keyword in ['핵심 인사이트', 'key insight', '중요한 통찰', '인사이트']):
+                in_insights_section = True
+                continue
+            elif in_insights_section and line:
+                if line.startswith(('•', '-', '*', '1.', '2.', '3.')):
+                    insight = line.lstrip('•-*123. ').strip()
+                    if insight and len(insight) > 10:
+                        insights.append(insight)
+                elif not any(keyword in line.lower() for keyword in ['강점', '약점', '개선', 'strength', 'weakness']):
+                    if len(line) > 10:
+                        insights.append(line)
+                else:
+                    break
+        
+        return insights[:2]  # 최대 2개
     
     def _display_reflection_result(self, result: Dict):
         """평가 결과 표시"""
@@ -1758,6 +1877,231 @@ class HypothesisEvaluationExpert:
             'weaknesses': ['추가 검증 필요'],
             'context_relevance': 'Activity Cliff 맥락에서 기본 평가 수행됨'
         }
+    
+    def evaluate_hypotheses(self, domain_hypotheses: List[Dict], shared_context: Dict) -> Dict:
+        """모든 가설을 종합 평가하고 최종 리포트 생성"""
+        
+        st.info("**Phase 3: 종합 평가** - 전체 가설의 장점을 통합하여 최종 리포트를 생성합니다")
+        
+        # 각 가설의 개별 강점과 약점 분석
+        individual_evaluations = []
+        
+        for i, hypothesis in enumerate(domain_hypotheses):
+            with st.spinner(f"{hypothesis['agent_name']} 가설 분석 중..."):
+                evaluation_prompt = self._build_individual_evaluation_prompt(hypothesis, shared_context)
+                
+                evaluation_text = self.llm_client.generate_response(
+                    system_prompt="당신은 과학적 가설 분석 전문가입니다. 각 가설의 강점과 약점을 객관적으로 분석합니다.",
+                    user_prompt=evaluation_prompt,
+                    temperature=0.3
+                )
+                
+                result = {
+                    'hypothesis_id': i,
+                    'agent_name': hypothesis['agent_name'],
+                    'original_hypothesis': hypothesis,
+                    'evaluation_text': evaluation_text,
+                    'strengths': self._extract_strengths(evaluation_text),
+                    'weaknesses': self._extract_weaknesses(evaluation_text),
+                    'key_insights': self._extract_key_insights(evaluation_text),
+                    'timestamp': time.time()
+                }
+                
+                individual_evaluations.append(result)
+                
+                # 개별 분석 결과 간단히 표시
+                with st.expander(f"📝 {result['agent_name']} 분석 요약", expanded=False):
+                    if result['strengths']:
+                        st.write("**주요 강점:**")
+                        for strength in result['strengths'][:2]:
+                            st.write(f"• {strength}")
+        
+        # 종합 리포트 생성
+        final_report = self._generate_comprehensive_report(individual_evaluations, shared_context)
+        
+        return final_report
+    
+    def _build_individual_evaluation_prompt(self, hypothesis: Dict, shared_context: Dict) -> str:
+        """개별 가설 분석용 프롬프트 구성"""
+        return f"""
+        **가설 분석 요청:**
+        
+        **전문가:** {hypothesis['agent_name']}
+        **가설 내용:**
+        {hypothesis['hypothesis']}
+        
+        **분석 요청:**
+        이 가설의 강점, 약점, 핵심 인사이트를 객관적으로 분석해주세요:
+        
+        **분석 형식:**
+        강점: [신뢰할 수 있고 가치 있는 부분들 2-3개]
+        약점: [개선이 필요한 부분들 1-2개]
+        핵심 인사이트: [이 가설에서 얻을 수 있는 중요한 통찰 1-2개]
+        
+        객관적이고 구체적인 분석을 부탁드립니다.
+        """
+    
+    def _generate_comprehensive_report(self, individual_evaluations: List[Dict], shared_context: Dict) -> Dict:
+        """모든 가설의 강점을 통합하여 최종 종합 리포트 생성"""
+        
+        # 모든 가설의 강점과 인사이트 수집
+        all_strengths = []
+        all_insights = []
+        all_hypotheses_text = []
+        
+        for eval_result in individual_evaluations:
+            all_strengths.extend(eval_result.get('strengths', []))
+            all_insights.extend(eval_result.get('key_insights', []))
+            all_hypotheses_text.append(f"**{eval_result['agent_name']}**: {eval_result['original_hypothesis']['hypothesis']}")
+        
+        # 가장 우수한 가설 선정 (강점이 가장 많은 것)
+        best_evaluation = max(individual_evaluations, key=lambda x: len(x.get('strengths', [])))
+        remaining_evaluations = [eval_result for eval_result in individual_evaluations if eval_result != best_evaluation]
+        
+        # 종합 리포트 생성 프롬프트
+        synthesis_prompt = f"""
+        **최종 종합 리포트 작성 요청:**
+        
+        다음은 3명의 전문가가 제시한 가설들입니다:
+        1. **{best_evaluation['agent_name']} (채택된 주요 가설)**: {best_evaluation['original_hypothesis']['hypothesis'][:500]}...
+        2. **{remaining_evaluations[0]['agent_name']}**: {remaining_evaluations[0]['original_hypothesis']['hypothesis'][:200]}...
+        3. **{remaining_evaluations[1]['agent_name']}**: {remaining_evaluations[1]['original_hypothesis']['hypothesis'][:200]}...
+        
+        **{best_evaluation['agent_name']} 가설의 주요 강점:**
+        {chr(10).join([f"• {strength}" for strength in best_evaluation.get('strengths', [])[:4]])}
+        
+        **다른 가설들의 보완 강점:**
+        {chr(10).join([f"• {strength}" for strength in all_strengths[:6] if strength not in best_evaluation.get('strengths', [])])}
+        
+        **작성 지침:**
+        1. **{best_evaluation['agent_name']} 가설을 주요 베이스로 사용**하되, 다른 가설의 우수한 부분으로 보완하세요
+        2. 구체적이고 전문적인 내용을 유지하고, 일반적인 설명은 피하세요
+        3. 각 전문가의 고유한 관점과 전문성을 존중하여 작성하세요
+        
+        **작성 형식:**
+        ### 🎯 최종 채택 가설
+        **주요 베이스: {best_evaluation['agent_name']}의 분석**
+        
+        **1. 구조적 차이점 분석**
+        [{best_evaluation['agent_name']}의 구조 분석을 중심으로, 다른 전문가들의 보완 관점을 통합한 완성된 분석]
+        
+        **2. 작용 기전 가설**
+        [생물학적 메커니즘에 대한 구체적이고 근거 있는 설명]
+        
+        **3. 실험적 근거 및 검증**
+        [가설을 뒷받침하는 실험적 근거와 추가 검증 방법]
+        
+        **4. 분자 설계 제안**
+        [구체적 구조 변경 전략 및 최적화 방향 - pKi 예측값 제외]
+        [제안 화합물들의 완성된 SMILES 코드 3-5개 포함]
+        
+        **5. 신뢰도 평가**
+        [이 가설의 신뢰도와 한계점에 대한 객관적 평가]
+        
+        ### 📋 추가 고려 가설
+        
+        **{remaining_evaluations[0]['agent_name']}의 대안 접근법:**
+        [{remaining_evaluations[0]['agent_name']}의 가설 핵심 내용을 2-3문장으로 요약]
+        
+        **{remaining_evaluations[1]['agent_name']}의 보완 관점:**
+        [{remaining_evaluations[1]['agent_name']}의 가설 핵심 내용을 2-3문장으로 요약]
+        
+        **주의**: 각 전문가의 독창적 분석과 구체적 제안사항을 유지하세요. 일반론은 제외하세요.
+        
+        **SMILES 코드 요구사항**: 분자 설계 제안에서 반드시 다음을 포함하세요:
+        - 제안 화합물 1: [설명] - SMILES: [완성된 SMILES 코드]
+        - 제안 화합물 2: [설명] - SMILES: [완성된 SMILES 코드]  
+        - 제안 화합물 3: [설명] - SMILES: [완성된 SMILES 코드]
+        (필요시 최대 5개까지)
+        """
+        
+        final_hypothesis = self.llm_client.generate_response(
+            system_prompt="당신은 SAR 분석 종합 전문가입니다. 여러 전문가의 의견을 통합하여 최고 품질의 종합 리포트를 작성합니다.",
+            user_prompt=synthesis_prompt,
+            temperature=0.2
+        )
+        
+        return {
+            'final_hypothesis': final_hypothesis,
+            'individual_evaluations': individual_evaluations,
+            'synthesis_metadata': {
+                'total_strengths_considered': len(all_strengths),
+                'total_insights_integrated': len(all_insights),
+                'synthesis_timestamp': time.time()
+            }
+        }
+    
+    def _extract_strengths(self, evaluation_text: str) -> List[str]:
+        """평가 텍스트에서 강점 추출"""
+        strengths = []
+        lines = evaluation_text.split('\n')
+        
+        in_strengths_section = False
+        for line in lines:
+            line = line.strip()
+            if any(keyword in line.lower() for keyword in ['강점', 'strength', '장점']):
+                in_strengths_section = True
+                continue
+            elif in_strengths_section and line:
+                if line.startswith(('•', '-', '*', '1.', '2.', '3.')):
+                    strength = line.lstrip('•-*123. ').strip()
+                    if strength and len(strength) > 5:
+                        strengths.append(strength)
+                elif not any(keyword in line.lower() for keyword in ['약점', '단점', 'weakness', '개선']):
+                    if len(line) > 5:
+                        strengths.append(line)
+                else:
+                    break
+        
+        return strengths[:3]  # 최대 3개
+    
+    def _extract_weaknesses(self, evaluation_text: str) -> List[str]:
+        """평가 텍스트에서 약점 추출"""
+        weaknesses = []
+        lines = evaluation_text.split('\n')
+        
+        in_weaknesses_section = False
+        for line in lines:
+            line = line.strip()
+            if any(keyword in line.lower() for keyword in ['약점', 'weakness', '단점', '개선']):
+                in_weaknesses_section = True
+                continue
+            elif in_weaknesses_section and line:
+                if line.startswith(('•', '-', '*', '1.', '2.', '3.')):
+                    weakness = line.lstrip('•-*123. ').strip()
+                    if weakness and len(weakness) > 5:
+                        weaknesses.append(weakness)
+                elif not any(keyword in line.lower() for keyword in ['강점', '장점', 'strength']):
+                    if len(line) > 5:
+                        weaknesses.append(line)
+                else:
+                    break
+        
+        return weaknesses[:2]  # 최대 2개
+    
+    def _extract_key_insights(self, evaluation_text: str) -> List[str]:
+        """평가 텍스트에서 핵심 인사이트 추출"""
+        insights = []
+        lines = evaluation_text.split('\n')
+        
+        in_insights_section = False
+        for line in lines:
+            line = line.strip()
+            if any(keyword in line.lower() for keyword in ['핵심 인사이트', 'key insight', '중요한 통찰', '인사이트']):
+                in_insights_section = True
+                continue
+            elif in_insights_section and line:
+                if line.startswith(('•', '-', '*', '1.', '2.', '3.')):
+                    insight = line.lstrip('•-*123. ').strip()
+                    if insight and len(insight) > 10:
+                        insights.append(insight)
+                elif not any(keyword in line.lower() for keyword in ['강점', '약점', '개선', 'strength', 'weakness']):
+                    if len(line) > 10:
+                        insights.append(line)
+                else:
+                    break
+        
+        return insights[:2]  # 최대 2개
 
 
 # 시각적 표시 함수들
@@ -1819,54 +2163,26 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     st.info("**Phase 2: Generation** - 3명의 전문가 Agent가 각자의 관점에서 독립적으로 가설을 생성합니다")
     domain_hypotheses = generation_phase(shared_context, llm_client)
     
-    # Phase 3: 전문가 기반 평가 및 순위 매김
+    # Phase 3: 종합 평가 및 최종 리포트 생성
     st.markdown("---")
-    st.info("**Phase 3: 전문가 평가** - 평가 전문 Agent가 Activity Cliff 데이터와 문헌 근거를 바탕으로 가설을 평가합니다")
+    # st.info("**Phase 3: 종합 평가** - 평가 전문 Agent가 모든 가설의 장점을 통합하여 최종 리포트를 생성합니다")
     
-    # 평가 전문가 에이전트 초기화
+    # 평가 전문가 에이전트 초기화 (기존 클래스 재사용)
     evaluator = HypothesisEvaluationExpert(llm_client)
-    evaluated_hypotheses = []
     
-    progress_bar = st.progress(0)
-    for i, hypothesis in enumerate(domain_hypotheses):
-        progress_bar.progress((i + 1) / len(domain_hypotheses))
-        
-        # 평가 전문가를 통한 가설 품질 평가
-        agent_name = hypothesis.get('agent_name', f'전문가 {i+1}')
-        with st.spinner(f"평가 전문가가 {agent_name}의 가설을 Activity Cliff 데이터 기반으로 평가 중..."):
-            quality_score = evaluator.evaluate(hypothesis, shared_context)
-        
-        evaluated_hypothesis = {
-            'rank': i + 1,
-            'agent_name': hypothesis.get('agent_name', f'전문가 {i+1}'),
-            'hypothesis': hypothesis.get('hypothesis', ''),
-            'confidence': hypothesis.get('confidence', 0.7),
-            'quality_scores': quality_score['scores'],
-            'overall_score': quality_score['overall_score'],
-            'strengths': quality_score['strengths'],
-            'weaknesses': quality_score['weaknesses'],
-            'context_relevance': quality_score.get('context_relevance', '')
-        }
-        
-        evaluated_hypotheses.append(evaluated_hypothesis)
-    
-    progress_bar.empty()
-    
-    # 점수순 정렬
-    evaluated_hypotheses.sort(key=lambda x: x['overall_score'], reverse=True)
-    
-    # 순위 재배정
-    for i, hyp in enumerate(evaluated_hypotheses):
-        hyp['rank'] = i + 1
+    # 새로운 종합 평가 방식 사용
+    evaluation_report = evaluator.evaluate_hypotheses(domain_hypotheses, shared_context)
     
     # 최종 리포트 생성
     final_report = {
-        'ranked_hypotheses': evaluated_hypotheses,
+        'final_hypothesis': evaluation_report.get('final_hypothesis', ''),
+        'individual_evaluations': evaluation_report.get('individual_evaluations', []),
+        'synthesis_metadata': evaluation_report.get('synthesis_metadata', {}),
         'process_metadata': {
             'total_time': time.time() - start_time,
             'total_agents': len(domain_hypotheses),
-            'analysis_method': 'Co-Scientist 단순화 버전',
-            'quality_assessment': True
+            'analysis_method': 'Co-Scientist 종합 평가 방법론',
+            'synthesis_approach': True
         },
         'literature_context': shared_context.get('literature_context'),
         'cliff_context': shared_context.get('cliff_summary')
@@ -1891,98 +2207,59 @@ def evaluate_hypothesis_quality(hypothesis: Dict, shared_context: Dict, api_key:
 
 
 def display_simplified_results(final_report: Dict):
-    """단순화된 최종 결과 표시"""
+    """종합 리포트 형식으로 최종 결과 표시"""
     
-    # 프로세스 요약 (표시 생략)
-    
-    # 상위 3개 가설 표시
-    hypotheses = final_report.get('ranked_hypotheses', [])[:3]
-    
-    for i, hypothesis in enumerate(hypotheses):
-        st.markdown("<br>", unsafe_allow_html=True)
+    # 최종 종합 가설 표시
+    final_hypothesis = final_report.get('final_hypothesis', '')
+    if final_hypothesis:
+        st.markdown(final_hypothesis)
+    else:
+        st.warning("최종 종합 가설을 생성할 수 없습니다.")
         
-        rank_emoji = ["🥇", "🥈", "🥉"][i]
-        agent_name = hypothesis.get('agent_name', f'전문가 {i+1}')
-        overall_score = hypothesis.get('overall_score', 0)
-        
-        st.markdown(f"### {rank_emoji} **{agent_name}** (종합점수: {overall_score:.0f}/100)")
-        
-        # 2열 레이아웃
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            # 가설 내용
-            hypothesis_text = hypothesis.get('hypothesis', '가설을 찾을 수 없습니다.')
-            if hypothesis_text:
-                st.markdown(hypothesis_text)
-            else:
-                st.warning("가설 내용을 표시할 수 없습니다.")
-                
-        with col2:
-            st.markdown("**품질 평가**")
+        # 대안으로 개별 분석 결과 표시
+        individual_evaluations = final_report.get('individual_evaluations', [])
+        if individual_evaluations:
+            st.markdown("## 📊 개별 전문가 분석 요약")
             
-            # 품질 점수 표시
-            quality_scores = hypothesis.get('quality_scores', {})
-            
-            st.metric("과학적 엄밀성", f"{quality_scores.get('scientific_rigor', 0):.0f}/100")
-            st.metric("논리적 일관성", f"{quality_scores.get('logical_coherence', 0):.0f}/100")
-            st.metric("증거 활용도", f"{quality_scores.get('evidence_integration', 0):.0f}/100")
-            st.metric("실용성", f"{quality_scores.get('practical_applicability', 0):.0f}/100")
-            st.metric("데이터 부합성", f"{quality_scores.get('data_consistency', 0):.0f}/100")
-            
-            # 신뢰도
-            confidence = hypothesis.get('confidence', 0.7)
-            st.metric("신뢰도", f"{confidence:.0%}")
-        
-        # 강점과 약점 + 평가 전문가의 상세 분석
-        with st.expander(f"{agent_name} 상세 평가 (평가 전문가 분석)", expanded=False):
-            # 평가 전문가의 5개 평가 기준 상세 표시
-            st.markdown("**평가 전문가의 세부 점수:**")
-            score_cols = st.columns(5)
-            
-            criterion_names = [
-                ('scientific_rigor', '과학적 엄밀성'),
-                ('logical_coherence', '논리적 일관성'), 
-                ('evidence_integration', '증거 활용도'),
-                ('practical_applicability', '실용성'),
-                ('data_consistency', '데이터 부합성')
-            ]
-            
-            for idx, (key, name) in enumerate(criterion_names):
-                with score_cols[idx]:
-                    score = quality_scores.get(key, 0)
-                    st.metric(name, f"{score:.0f}")
-            
-            st.markdown("---")
-            
-            # 맥락 연관성 표시 (컴팩트하게)
-            context_relevance = hypothesis.get('context_relevance', '')
-            if context_relevance:
-                st.markdown("**Activity Cliff 데이터 연관성:**")
-                st.write(context_relevance)
-                st.markdown("---")
-            
-            # 강점과 약점을 컴팩트하게 배치
-            col_strength, col_weakness = st.columns(2)
-            
-            with col_strength:
-                st.markdown("**🟢 주요 강점:**")
-                strengths = hypothesis.get('strengths', [])
-                for strength in strengths:
-                    st.write(f"• {strength}")
+            for eval_result in individual_evaluations:
+                with st.expander(f"📝 {eval_result['agent_name']} 상세 분석", expanded=False):
+                    col1, col2 = st.columns([2, 1])
                     
-            with col_weakness:
-                st.markdown("**🟡 개선 포인트:**")
-                weaknesses = hypothesis.get('weaknesses', [])
-                for weakness in weaknesses:
-                    st.write(f"• {weakness}")
-        
-        # 가설 간 시각적 구분을 위한 여백
-        # st.markdown("<br>", unsafe_allow_html=True)
-        # st.markdown("---")
-        # st.markdown("<br>", unsafe_allow_html=True)
+                    with col1:
+                        st.write("**원본 가설:**")
+                        hypothesis_text = eval_result['original_hypothesis'].get('hypothesis', '')
+                        if len(hypothesis_text) > 300:
+                            st.write(hypothesis_text[:300] + "...")
+                        else:
+                            st.write(hypothesis_text)
+                    
+                    with col2:
+                        if eval_result.get('strengths'):
+                            st.write("**주요 강점:**")
+                            for strength in eval_result['strengths'][:2]:
+                                st.write(f"• {strength}")
+                        
+                        if eval_result.get('key_insights'):
+                            st.write("**핵심 인사이트:**")
+                            for insight in eval_result['key_insights'][:2]:
+                                st.write(f"• {insight}")
     
+    # 종합 프로세스 메타데이터 표시
     st.markdown("---")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    metadata = final_report.get('process_metadata', {})
+    synthesis_metadata = final_report.get('synthesis_metadata', {})
+    
+    with col1:
+        st.metric("총 소요시간", f"{metadata.get('total_time', 0):.1f}초")
+    with col2:
+        st.metric("참여 전문가", f"{metadata.get('total_agents', 0)}명")
+    with col3:
+        st.metric("통합 강점", f"{synthesis_metadata.get('total_strengths_considered', 0)}개")
+    with col4:
+        st.metric("통합 인사이트", f"{synthesis_metadata.get('total_insights_integrated', 0)}개")
 
 
 def prepare_shared_context(selected_cliff: Dict, target_name: str) -> Dict:

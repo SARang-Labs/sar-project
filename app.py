@@ -6,8 +6,6 @@ import plotly.express as px
 from rdkit import Chem
 from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
-
-# utils.py로부터 모든 필요한 함수를 임포트합니다.
 from utils import (
     load_data,
     find_activity_cliffs,
@@ -174,7 +172,7 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                     if sim >= sim_thresh and df_quant.iloc[i]['Activity'] != df_quant.iloc[j]['Activity']:
                         pairs.append({'mol1_index': i, 'mol2_index': j, 'similarity': sim})
 
-            # <<< 수정: Activity 분류 차이를 기반으로 정렬하는 로직 추가 >>>
+            # <<< Activity 분류 차이를 기반으로 정렬하는 로직 >>>
             # 1. Activity 분류에 점수 부여
             activity_map = {'Highly Active': 4, 'Moderately Active': 3, 'Weakly Active': 2, 'Inactive': 1}
             
@@ -188,7 +186,6 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
             
             # 3. 점수 차이가 큰 순서대로 내림차순 정렬
             pairs.sort(key=lambda x: x.get('activity_category_diff', 0), reverse=True)
-            # <<< 수정 끝 >>>
 
             st.session_state[f'quant_pairs_{tab_key}'] = pairs
             st.session_state[f'quant_data_{tab_key}'] = df_quant
@@ -308,7 +305,6 @@ def main():
                 analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
                 st.markdown("---")
                 if analysis_type_adv == "정량 분석":
-                    # <<< 수정: 빠진 available_activity_cols 인수 추가
                     render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name, api_key, llm_provider)
                 else:
                     render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name, api_key, llm_provider)
@@ -319,7 +315,6 @@ def main():
                 analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
                 st.markdown("---")
                 if analysis_type_basic == "정량 분석":
-                    # <<< 수정: 빠진 available_activity_cols 인수 추가
                     render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name, api_key, llm_provider)
                 else:
                     render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name, api_key, llm_provider)

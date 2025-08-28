@@ -86,7 +86,7 @@ def calculate_molecular_properties(mol):
         }
     except Exception:
         return {}
-# <<< 최종 완성본 get_activity_cliff_summary 함수 >>>
+# <<< get_activity_cliff_summary 함수 >>>
 def get_activity_cliff_summary(cliff_data, activity_col=None):
     """
     Activity Cliff 데이터의 요약 정보를 생성합니다.
@@ -145,14 +145,14 @@ def get_activity_cliff_summary(cliff_data, activity_col=None):
     }
     return summary
 
-# --- Data Loading (개선된 버전 유지) ---
+# --- Data Loading ---
 @st.cache_data
 def load_data(uploaded_file):
     """CSV 파일을 로드하고, pKi와 pIC50 컬럼을 지능적으로 통합하여 데이터를 전처리합니다."""
     try:
         df = pd.read_csv(uploaded_file)
 
-        # --- <<< 최종 수정 로직: 컬럼 이름 확인 방식 통일 >>> ---
+        # --- <<< 컬럼 이름 확인 방식 통일 >>> ---
         
         # 1. 유연한 방식으로 pKi 및 pIC50 관련 컬럼 이름들을 먼저 찾습니다.
         pki_cols = [col for col in df.columns if 'pKi' in col]
@@ -179,7 +179,6 @@ def load_data(uploaded_file):
             # pIC50 컬럼을 'pKi'라는 이름으로 생성합니다.
             df['pKi'] = df[pic50_col_name]
             st.info(f"Info: '{pic50_col_name}' 컬럼을 'pKi'로 변환했습니다.")
-        # --- 수정 로직 끝 ---
 
         if 'SMILES' not in df.columns:
             st.error("오류: CSV 파일에 'SMILES' 컬럼이 반드시 포함되어야 합니다.")
@@ -213,7 +212,6 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
     
     fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048, includeChirality=True)
     df_analysis['fp'] = [fpgenerator.GetFingerprint(m) for m in df_analysis['mol']]
-    # Murcko Scaffold 계산 로직 복원
     df_analysis['scaffold'] = df_analysis['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)) if m else None)
     
     cliffs = []
@@ -336,7 +334,6 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
 
 def generate_hypothesis_quantitative(mol1, mol2, similarity, target_name, api_key, llm_provider):
     """정량(분류) 데이터에 대한 가설을 생성합니다."""
-    # (기능 변경 없음, 기존 로직 유지)
     if not api_key: return "사이드바에 API 키를 입력해주세요.", None
     context = search_pubmed_for_context(mol1['SMILES'], mol2['SMILES'], target_name)
     rag_prompt = f"\n\n**참고 문헌:**\n- 제목: {context['title']}\n- 초록: {context['abstract']}\n\n위 문헌을 바탕으로 가설을 생성해주세요." if context else ""
@@ -351,7 +348,6 @@ def generate_hypothesis_quantitative(mol1, mol2, similarity, target_name, api_ke
 
 def call_llm(user_prompt, api_key, llm_provider):
     """LLM API를 호출하는 공통 함수입니다."""
-    # (기능 변경 없음, 기존 로직 유지)
     try:
         system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 주어진 데이터를 바탕으로 구조-활성 관계(SAR)에 대한 명확하고 간결한 분석 리포트를 마크다운 형식으로 작성해주세요."
         if llm_provider == "OpenAI":

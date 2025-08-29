@@ -124,76 +124,123 @@ def calculate_molecular_properties(mol):
     
     return properties
 
-def get_activity_cliff_summary(cliff_data):
-    """Activity Cliff 데이터의 요약 정보를 생성합니다."""
-    mol1 = cliff_data['mol_1']
-    mol2 = cliff_data['mol_2']
-    
-    # 더 활성이 높은 분자와 낮은 분자 구분
-    if mol1['pKi'] > mol2['pKi']:
-        high_active, low_active = mol1, mol2
-        high_props, low_props = cliff_data['mol1_properties'], cliff_data['mol2_properties']
+def get_activity_cliff_summary(cliff_data, activity_col=None):
+    """
+    Activity Cliff 데이터의 요약 정보를 생성합니다.
+    분류형('activity')과 숫자형('pki') 활성도 정보를 모두 포함하여 외부 모듈과의 호환성을 완벽하게 보장합니다.
+    """
+    mol1_info, mol2_info = cliff_data['mol_1'], cliff_data['mol_2']
+    high_props, low_props = cliff_data.get('mol1_properties', {}), cliff_data.get('mol2_properties', {})
+
+    # 숫자형 활성도 컬럼이 있을 경우에만 고/저 활성 비교
+    if activity_col and pd.api.types.is_numeric_dtype(pd.Series([mol1_info.get(activity_col), mol2_info.get(activity_col)])):
+        if mol1_info.get(activity_col, 0) > mol2_info.get(activity_col, 0):
+            high_active, low_active = mol1_info, mol2_info
+        else:
+            high_active, low_active = mol2_info, mol1_info
+            high_props, low_props = cliff_data.get('mol2_properties', {}), cliff_data.get('mol1_properties', {})
     else:
-        high_active, low_active = mol2, mol1
-        high_props, low_props = cliff_data['mol2_properties'], cliff_data['mol1_properties']
-    
+        # 그 외의 경우(예: 정량 분석)는 순서대로 할당
+        high_active, low_active = mol1_info, mol2_info
+
+    def _create_compound_summary(compound_info, props):
+        """내부 헬퍼 함수: 화합물 요약 정보를 생성"""
+        # 'activity' 키: 분석 기준이 된 컬럼의 값을 그대로 사용 (e.g., "Moderately Active")
+        activity_display_key = activity_col if activity_col else 'Activity'
+        activity_display_value = compound_info.get(activity_display_key)
+        
+        # 'pki' 키: 데이터에 'pKi' 컬럼이 있으면 그 숫자 값을, 없으면 0.0을 사용
+        pki_numeric_value = compound_info.get('pKi')
+        pki_value = pki_numeric_value if isinstance(pki_numeric_value, (int, float)) else 0.0
+        
+        return {
+            'id': compound_info.get('ID'),
+            'smiles': compound_info.get('SMILES'),
+            'activity': activity_display_value,
+            'pki': pki_value,
+            'properties': props
+        }
+
     summary = {
-        'high_activity_compound': {
-            'id': high_active['ID'],
-            'smiles': high_active['canonical_smiles'],
-            'pki': high_active['pKi'],
-            'properties': high_props
-        },
-        'low_activity_compound': {
-            'id': low_active['ID'],
-            'smiles': low_active['canonical_smiles'],
-            'pki': low_active['pKi'],
-            'properties': low_props
-        },
+        'high_activity_compound': _create_compound_summary(high_active, high_props),
+        'low_activity_compound': _create_compound_summary(low_active, low_props),
         'cliff_metrics': {
-            'similarity': cliff_data['similarity'],
-            'activity_difference': cliff_data['activity_diff'],
-            'structural_difference_type': cliff_data['structural_difference'],
-            'is_stereoisomer_pair': cliff_data['is_stereoisomer'],
-            'same_scaffold': cliff_data['same_scaffold'],
-            'cliff_score': cliff_data['score']
+            'similarity': cliff_data.get('similarity'),
+            'activity_difference': cliff_data.get('activity_difference'), # find_activity_cliffs에서 계산된 값을 그대로 사용
+            'structural_difference_type': cliff_data.get('structural_difference'),
+            'is_stereoisomer_pair': cliff_data.get('is_stereoisomer'),
+            'same_scaffold': cliff_data.get('same_scaffold'),
+            'cliff_score': cliff_data.get('score')
         },
         'property_differences': {
-            'mw_diff': abs(high_props['molecular_weight'] - low_props['molecular_weight']),
-            'logp_diff': abs(high_props['logp'] - low_props['logp']),
-            'tpsa_diff': abs(high_props['tpsa'] - low_props['tpsa']),
-            'hbd_diff': abs(high_props['hbd'] - low_props['hbd']),
-            'hba_diff': abs(high_props['hba'] - low_props['hba'])
+            'mw_diff': abs(high_props.get('molecular_weight', 0) - low_props.get('molecular_weight', 0)),
+            'logp_diff': abs(high_props.get('logp', 0) - low_props.get('logp', 0)),
+            'tpsa_diff': abs(high_props.get('tpsa', 0) - low_props.get('tpsa', 0)),
+            'hbd_diff': abs(high_props.get('hbd', 0) - low_props.get('hbd', 0)),
+            'hba_diff': abs(high_props.get('hba', 0) - low_props.get('hba', 0))
         }
     }
-    
     return summary
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
-st.cache_data
+@st.cache_data
 def load_data(uploaded_file):
-    """업로드된 CSV 파일을 Pandas DataFrame으로 로드하고 전처리합니다."""
+    """CSV 파일을 로드하고, pKi와 pIC50 컬럼을 지능적으로 통합하여 데이터를 전처리합니다."""
     try:
-        # CSV 파일의 pKi 컬럼을 명시적으로 숫자형으로 읽어오도록 처리
         df = pd.read_csv(uploaded_file)
-        required_cols = ['ID', 'SMILES', 'pKi']
-        if not all(col in df.columns for col in required_cols):
-            st.error(f"CSV 파일은 {', '.join(required_cols)} 컬럼을 포함해야 합니다.")
-            return None
-        
-        df['SMILES'] = df['SMILES'].apply(canonicalize_smiles)
-        df.dropna(subset=['SMILES'], inplace=True) # 유효하지 않은 SMILES 제거
-        df['pKi'] = pd.to_numeric(df['pKi'], errors='coerce')
-        df.dropna(subset=['pKi'], inplace=True) # pKi 변환 실패한 행 제거
 
-        return df
+        # --- 컬럼 이름 확인 방식 통일 ---
+        
+        # 1. 유연한 방식으로 pKi 및 pIC50 관련 컬럼 이름들을 먼저 찾습니다.
+        pki_cols = [col for col in df.columns if 'pKi' in col]
+        pic50_cols = [col for col in df.columns if 'pIC50' in col]
+
+        # 2. 찾은 컬럼 이름을 기준으로 pKi 데이터를 보정/생성합니다.
+        if pki_cols and pic50_cols:
+            pki_col_name = pki_cols[0]
+            pic50_col_name = pic50_cols[0]
+            
+            df[pki_col_name] = pd.to_numeric(df[pki_col_name], errors='coerce')
+            df[pic50_col_name] = pd.to_numeric(df[pic50_col_name], errors='coerce')
+            
+            df[pki_col_name].replace(0, np.nan, inplace=True)
+            df[pki_col_name].fillna(df[pic50_col_name], inplace=True)
+            
+            # 기준이 되는 pKi 컬럼 이름을 'pKi'로 통일합니다.
+            if pki_col_name != 'pKi':
+                df.rename(columns={pki_col_name: 'pKi'}, inplace=True)
+            st.info("Info: 'pKi'와 'pIC50' 값을 지능적으로 병합했습니다.")
+
+        elif not pki_cols and pic50_cols:
+            pic50_col_name = pic50_cols[0]
+            # pIC50 컬럼을 'pKi'라는 이름으로 생성합니다.
+            df['pKi'] = df[pic50_col_name]
+            st.info(f"Info: '{pic50_col_name}' 컬럼을 'pKi'로 변환했습니다.")
+
+        if 'SMILES' not in df.columns:
+            st.error("오류: CSV 파일에 'SMILES' 컬럼이 반드시 포함되어야 합니다.")
+            return None, []
+        if 'ID' not in df.columns:
+            df.insert(0, 'ID', [f"Mol_{i+1}" for i in range(len(df))])
+            st.info("Info: 'ID' 컬럼이 없어 자동으로 생성되었습니다.")
+        
+        activity_cols = sorted([col for col in df.columns if 'pKi' in col or 'pIC50' in col], reverse=True)
+        if not activity_cols:
+            st.error("오류: CSV 파일에 'pKi' 또는 'pIC50'을 포함하는 활성 데이터 컬럼이 없습니다.")
+            return None, []
+            
+        df['SMILES'] = df['SMILES'].apply(canonicalize_smiles)
+        df.dropna(subset=['SMILES'], inplace=True)
+        for col in activity_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df, activity_cols
     except Exception as e:
         st.error(f"데이터 로딩 중 오류 발생: {e}")
-        return None
+        return None, []
 
 # --- Phase 2: 핵심 패턴 자동 추출 ---
-st.cache_data
-def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
+@st.cache_data
+def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, activity_col='pKi'):
     """DataFrame에서 Activity Cliff 쌍을 찾고 스코어를 계산하여 정렬합니다."""
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
     
@@ -203,16 +250,16 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
     df['scaffold'] = df['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)) if m else None)
     
     cliffs = []
-    # 데이터프레임의 pKi 컬럼을 숫자형으로 변환 (오류 발생 시 NaN으로)
-    df['pKi'] = pd.to_numeric(df['pKi'], errors='coerce')
-    # pKi 값이 NaN인 행 제거
-    df.dropna(subset=['pKi'], inplace=True)
+    # 데이터프레임의 활성 컬럼을 숫자형으로 변환 (오류 발생 시 NaN으로)
+    df[activity_col] = pd.to_numeric(df[activity_col], errors='coerce')
+    # 활성 값이 NaN인 행 제거
+    df.dropna(subset=[activity_col], inplace=True)
 
     for i in range(len(df)):
         for j in range(i + 1, len(df)):
             sim = DataStructs.TanimotoSimilarity(df['fp'].iloc[i], df['fp'].iloc[j])
             if sim >= similarity_threshold:
-                act_diff = abs(df['pKi'].iloc[i] - df['pKi'].iloc[j])
+                act_diff = abs(df[activity_col].iloc[i] - df[activity_col].iloc[j])
                 if act_diff >= activity_diff_threshold:
                     score = act_diff * (sim - similarity_threshold) * (1 if df['scaffold'].iloc[i] == df['scaffold'].iloc[j] else 0.5)
                     
@@ -262,7 +309,7 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
 
 # --- Phase 3: LLM 기반 해석 및 가설 생성 (RAG 적용) ---
 
-st.cache_data
+@st.cache_data
 def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
     def fetch_articles(search_term):
         try:
@@ -298,7 +345,7 @@ def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
     return fetch_articles(f'("{target_name}"[Title/Abstract]) AND ("structure activity relationship"[Title/Abstract])')
 
 
-def generate_hypothesis(cliff, target_name, api_key, llm_provider):
+def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activity_col='pKi'):
     if not api_key:
         return "사이드바에 API 키를 입력해주세요.", None
 
@@ -338,7 +385,7 @@ def generate_hypothesis(cliff, target_name, api_key, llm_provider):
     - **화합물 A (낮은 활성):**
       - ID: {low_active['id']}
       - 표준 SMILES: {low_active['smiles']}
-      - 활성도 (pKi): {low_active['pki']:.2f}
+      - 활성도 (pKi): {low_active['pki']}
       - 분자량: {low_active['properties']['molecular_weight']:.2f} Da
       - LogP: {low_active['properties']['logp']:.2f}
       - TPSA: {low_active['properties']['tpsa']:.2f} Ų
@@ -346,14 +393,14 @@ def generate_hypothesis(cliff, target_name, api_key, llm_provider):
     - **화합물 B (높은 활성):**
       - ID: {high_active['id']}
       - 표준 SMILES: {high_active['smiles']}
-      - 활성도 (pKi): {high_active['pki']:.2f}
+      - 활성도 (pKi): {high_active['pki']}
       - 분자량: {high_active['properties']['molecular_weight']:.2f} Da
       - LogP: {high_active['properties']['logp']:.2f}
       - TPSA: {high_active['properties']['tpsa']:.2f} Ų
     
     **Activity Cliff 메트릭:**
     - Tanimoto 유사도: {metrics['similarity']:.3f}
-    - 활성도 차이 (ΔpKi): {metrics['activity_difference']:.2f}
+    - 활성도 차이 (ΔpKi): {metrics['activity_difference']}
     - Cliff 점수: {metrics['cliff_score']:.3f}
     
     {props_info}
@@ -380,6 +427,42 @@ def generate_hypothesis(cliff, target_name, api_key, llm_provider):
     except Exception as e:
         return f"{llm_provider} API 호출 중 오류 발생: {e}", None
     return "알 수 없는 LLM 공급자입니다.", None
+
+
+def generate_hypothesis_quantitative(mol1, mol2, similarity, target_name, api_key, llm_provider):
+    """정량(분류) 데이터에 대한 가설을 생성합니다."""
+    if not api_key:
+        return "사이드바에 API 키를 입력해주세요.", None
+    
+    context_info = search_pubmed_for_context(mol1['SMILES'], mol2['SMILES'], target_name)
+    rag_prompt_addition = f"\n\n**참고 문헌 정보:**\n- 제목: {context_info['title']}\n- 초록: {context_info['abstract']}\n\n위 문헌을 바탕으로 가설을 생성해주세요." if context_info else ""
+    
+    user_prompt = f"""
+    **분석 대상:** 타겟 단백질 {target_name}
+    - **화합물 1:** ID {mol1['ID']}, SMILES {mol1['SMILES']}, 활성 분류: {mol1['Activity']}
+    - **화합물 2:** ID {mol2['ID']}, SMILES {mol2['SMILES']}, 활성 분류: {mol2['Activity']}
+    **유사도:** {similarity}
+    **분석 요청:** 두 화합물은 구조적으로 매우 유사하지만 활성 분류가 다릅니다. 이 차이를 유발하는 구조적 요인에 대한 과학적 가설을 제시해주세요.{rag_prompt_addition}
+    """
+    
+    return call_llm(user_prompt, api_key, llm_provider), context_info
+
+
+def call_llm(user_prompt, api_key, llm_provider):
+    """LLM API를 호출하는 공통 함수입니다."""
+    try:
+        system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 주어진 데이터를 바탕으로 구조-활성 관계(SAR)에 대한 명확하고 간결한 분석 리포트를 마크다운 형식으로 작성해주세요."
+        if llm_provider == "OpenAI":
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
+            return response.choices[0].message.content
+        elif llm_provider == "Gemini":
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(system_prompt + "\n\n" + user_prompt)
+            return response.text
+    except Exception as e:
+        return f"{llm_provider} API 호출 중 오류 발생: {e}"
 
 
 # --- Phase 4: 시각화 ---

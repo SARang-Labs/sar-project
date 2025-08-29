@@ -185,3 +185,4 @@ llm_debate/logs/*
 # Documentation - internal analysis files
 docs/
 archive_docs/
+app_old.py

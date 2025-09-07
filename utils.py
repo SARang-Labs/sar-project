@@ -13,7 +13,8 @@ import xml.etree.ElementTree as ET
 import joblib
 import json
 import os
-from urllib.parse import quote 
+from urllib.parse import quote
+import itertools
 
 
 # --- Helper Functions ---
@@ -183,59 +184,43 @@ def get_activity_cliff_summary(cliff_data, activity_col=None):
     return summary
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
-@st.cache_data
-def load_data(uploaded_file):
-    """CSV 파일을 로드하고, pKi와 pIC50 컬럼을 지능적으로 통합하여 데이터를 전처리합니다."""
+def load_data(df_from_db):
+    """
+    데이터베이스에서 로드된 데이터프레임을 받아 후처리를 수행합니다.
+    'Target'을 포함한 모든 컬럼을 유지합니다.
+    """
     try:
-        df = pd.read_csv(uploaded_file)
+        df = df_from_db.copy()
 
-        # --- 컬럼 이름 확인 방식 통일 ---
+        # 1. pKi, pIC50 컬럼을 찾아 'pKi'로 통합 (pKi 우선)
+        if "pIC50" in df.columns and "pKi" not in df.columns:
+            df.rename(columns={"pIC50": "pKi"}, inplace=True)
+        elif "pIC50" in df.columns and "pKi" in df.columns:
+            df['pKi'] = df['pKi'].fillna(df['pIC50'])
         
-        # 1. 유연한 방식으로 pKi 및 pIC50 관련 컬럼 이름들을 먼저 찾습니다.
-        pki_cols = [col for col in df.columns if 'pKi' in col]
-        pic50_cols = [col for col in df.columns if 'pIC50' in col]
-
-        # 2. 찾은 컬럼 이름을 기준으로 pKi 데이터를 보정/생성합니다.
-        if pki_cols and pic50_cols:
-            pki_col_name = pki_cols[0]
-            pic50_col_name = pic50_cols[0]
-            
-            df[pki_col_name] = pd.to_numeric(df[pki_col_name], errors='coerce')
-            df[pic50_col_name] = pd.to_numeric(df[pic50_col_name], errors='coerce')
-            
-            df[pki_col_name].replace(0, np.nan, inplace=True)
-            df[pki_col_name].fillna(df[pic50_col_name], inplace=True)
-            
-            # 기준이 되는 pKi 컬럼 이름을 'pKi'로 통일합니다.
-            if pki_col_name != 'pKi':
-                df.rename(columns={pki_col_name: 'pKi'}, inplace=True)
-            st.info("Info: 'pKi'와 'pIC50' 값을 지능적으로 병합했습니다.")
-
-        elif not pki_cols and pic50_cols:
-            pic50_col_name = pic50_cols[0]
-            # pIC50 컬럼을 'pKi'라는 이름으로 생성합니다.
-            df['pKi'] = df[pic50_col_name]
-            st.info(f"Info: '{pic50_col_name}' 컬럼을 'pKi'로 변환했습니다.")
-
+        # 2. 필수 컬럼(SMILES) 존재 여부 확인
         if 'SMILES' not in df.columns:
-            st.error("오류: CSV 파일에 'SMILES' 컬럼이 반드시 포함되어야 합니다.")
+            st.error("오류: 데이터에 'SMILES' 컬럼이 없습니다.")
             return None, []
-        if 'ID' not in df.columns:
-            df.insert(0, 'ID', [f"Mol_{i+1}" for i in range(len(df))])
-            st.info("Info: 'ID' 컬럼이 없어 자동으로 생성되었습니다.")
-        
-        activity_cols = sorted([col for col in df.columns if 'pKi' in col or 'pIC50' in col], reverse=True)
-        if not activity_cols:
-            st.error("오류: CSV 파일에 'pKi' 또는 'pIC50'을 포함하는 활성 데이터 컬럼이 없습니다.")
-            return None, []
-            
-        df['SMILES'] = df['SMILES'].apply(canonicalize_smiles)
+
+        # 3. SMILES 표준화 및 유효하지 않은 데이터 제거
+        initial_rows = len(df)
+        df['SMILES'] = df['SMILES'].apply(lambda s: Chem.MolToSmiles(Chem.MolFromSmiles(s)) if Chem.MolFromSmiles(s) else None)
         df.dropna(subset=['SMILES'], inplace=True)
-        for col in activity_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        invalid_smiles_count = initial_rows - len(df)
+        if invalid_smiles_count > 0:
+            st.warning(f"경고: {invalid_smiles_count}개의 유효하지 않은 SMILES 데이터가 제외되었습니다.")
+
+        # 4. 분석 가능한 활성 컬럼 목록 반환
+        activity_cols = [col for col in ["pKi", "pIC50"] if col in df.columns and pd.to_numeric(df[col], errors='coerce').notna().any()]
+        if not activity_cols:
+            st.warning("경고: 분석 가능한 숫자형 활성 데이터(pKi 또는 pIC50)가 없습니다.")
+
         return df, activity_cols
+
     except Exception as e:
-        st.error(f"데이터 로딩 중 오류 발생: {e}")
+        st.error(f"데이터 후처리 중 오류 발생: {e}")
         return None, []
 
 # --- Phase 2: 핵심 패턴 자동 추출 ---

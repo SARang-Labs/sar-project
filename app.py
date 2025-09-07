@@ -7,6 +7,7 @@ from rdkit import Chem
 from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 import sqlite3 # DB 연동을 위해 추가
+import json
 
 # utils.py로부터 모든 필요한 함수를 임포트합니다.
 from utils import (
@@ -17,7 +18,8 @@ from utils import (
     draw_highlighted_pair,
     check_stereoisomers,
     calculate_molecular_properties,
-    get_structural_difference_keyword
+    get_structural_difference_keyword,
+    save_results_to_db
 )
 
 # --- 외부 시스템 임포트 (원본과 동일) ---
@@ -109,13 +111,36 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                             with st.expander("참고 문헌 정보 (RAG)"): st.json(context)
 
         elif tab_key.endswith('advanced'):
-            if st.button("온라인 토론 시작", key=f"disc_{idx}_{tab_key}"):
-                if not api_key: st.warning("사이드바에서 API 키를 입력해주세요.")
-                elif not ONLINE_DISCUSSION_AVAILABLE: st.error("온라인 토론 시스템 모듈을 로드할 수 없습니다.")
-                else:
-                    with st.spinner("AI 전문가들이 토론을 시작합니다..."):
-                        report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider)
-                        st.json(report)
+        # --- [수정된 부분 시작] ---
+         if st.button("온라인 토론 시작 및 결과 저장", key=f"disc_{idx}_{tab_key}"):
+            if not api_key: 
+                st.warning("사이드바에서 API 키를 입력해주세요.")
+            elif not ONLINE_DISCUSSION_AVAILABLE: 
+                st.error("온라인 토론 시스템 모듈을 로드할 수 없습니다.")
+            else:
+                with st.spinner("AI 전문가들이 토론 후 최종 리포트를 작성합니다..."):
+                    # 1. 온라인 토론 시스템 실행하여 최종 리포트 받기
+                    final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider)
+                    
+                    st.markdown("### 전문가 토론 최종 리포트")
+                    st.json(final_report)
+
+                    # 2. utils의 함수를 호출하여 DB에 최종 리포트 저장
+                    # final_report가 dict 형태일 수 있으므로, json.dumps로 텍스트 변환
+                    report_text = json.dumps(final_report, indent=2, ensure_ascii=False)
+                    
+                    saved_id = save_results_to_db(
+                        db_path=db_path,
+                        cliff_data=cliff_data,
+                        hypothesis_text=report_text, # 최종 리포트를 저장
+                        llm_provider="Expert Discussion System", # 에이전트 이름 변경
+                        context_info=None # 리포트 자체에 포함된 것으로 간주
+                    )
+
+                    if saved_id:
+                        st.success(f"토론 리포트가 데이터베이스에 성공적으로 저장되었습니다. (Analysis ID: {saved_id})")
+                    else:
+                        st.error("데이터베이스 저장에 실패했습니다.")
 
 
 # --- UI 렌더링 함수 (원본과 동일) ---

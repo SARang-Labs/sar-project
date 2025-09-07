@@ -15,6 +15,66 @@ import json
 import os
 from urllib.parse import quote
 import itertools
+import sqlite3
+import json
+
+# --- 결과 저장 함수 ---
+def save_results_to_db(db_path, cliff_data, hypothesis_text, llm_provider, context_info=None):
+    """
+    분석 결과(cliff)와 AI 가설을 데이터베이스에 저장합니다.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # 1. sar_analyses 테이블에 분석 결과 저장
+        analysis_sql = """
+        INSERT INTO sar_analyses (compound_id_1, compound_id_2, similarity, activity_difference, score)
+        VALUES (?, ?, ?, ?, ?);
+        """
+        analysis_data = (
+            cliff_data['mol_1'].get('ID'),
+            cliff_data['mol_2'].get('ID'),
+            cliff_data.get('similarity'),
+            cliff_data.get('activity_diff'),
+            cliff_data.get('score')
+        )
+        cursor.execute(analysis_sql, analysis_data)
+        
+        # 방금 저장된 analysis_id 가져오기
+        last_analysis_id = cursor.lastrowid
+        print(f"분석 결과 저장 완료 (Analysis ID: {last_analysis_id})")
+
+        # 2. ai_hypotheses 테이블에 가설 저장
+        if hypothesis_text:
+            hypothesis_sql = """
+            INSERT INTO ai_hypotheses (analysis_id, agent_name, hypothesis_text, context_info)
+            VALUES (?, ?, ?, ?);
+            """
+            # context_info 딕셔너리를 JSON 형태의 텍스트로 변환
+            context_text = json.dumps(context_info) if context_info else None
+            
+            hypothesis_data = (
+                last_analysis_id,
+                llm_provider,
+                hypothesis_text,
+                context_text
+            )
+            cursor.execute(hypothesis_sql, hypothesis_data)
+            print(f"AI 가설 저장 완료 (Hypothesis for Analysis ID: {last_analysis_id})")
+
+        conn.commit()
+        return last_analysis_id # 성공 시 저장된 ID 반환
+
+    except Exception as e:
+        print(f"DB 저장 중 오류 발생: {e}")
+        if conn:
+            conn.rollback() # 오류 발생 시 트랜잭션 롤백
+        return None
+    finally:
+        if conn:
+            conn.close()
 
 
 # --- Helper Functions ---

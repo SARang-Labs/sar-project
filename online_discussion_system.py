@@ -14,6 +14,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import streamlit as st
 from openai import OpenAI
 from utils import search_pubmed_for_context, get_activity_cliff_summary
+from llm_debate.tools.docking_simulator import DockingSimulator
 
 class UnifiedLLMClient:
     """통합 LLM 클라이언트"""
@@ -262,10 +263,16 @@ class BiomolecularInteractionExpert:
         self.llm_client = llm_client
         self.persona = """당신은 단백질-리간드 상호작용 메커니즘 분야의 세계적 권위자입니다.
         타겟 단백질과의 결합 방식 변화, 약리학적 관점과 생리활성 메커니즘 규명을 전문으로 합니다."""
+        self.docking_simulator = DockingSimulator()
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """생체분자 상호작용 관점의 가설 생성"""
-        prompt = self._build_interaction_prompt(shared_context)
+        """생체분자 상호작용 관점의 가설 생성 (도킹 시뮬레이션 포함)"""
+        
+        # 도킹 시뮬레이션 수행
+        docking_results = self._perform_docking_analysis(shared_context)
+        
+        # 도킹 결과를 포함한 프롬프트 생성
+        prompt = self._build_interaction_prompt(shared_context, docking_results)
         hypothesis = self.llm_client.generate_response(self.persona, prompt, temperature=0.7)
         
         return {
@@ -275,10 +282,59 @@ class BiomolecularInteractionExpert:
             'confidence': self._extract_confidence_from_text(hypothesis),
             'key_insights': self._extract_key_insights(hypothesis),
             'reasoning_steps': self._extract_reasoning_steps(hypothesis),
+            'docking_analysis': docking_results,  # 도킹 분석 결과 포함
             'timestamp': time.time()
         }
     
-    def _build_interaction_prompt(self, shared_context: Dict[str, Any]) -> str:
+    def _perform_docking_analysis(self, shared_context: Dict[str, Any]) -> Dict:
+        """도킹 시뮬레이션 수행"""
+        cliff_summary = shared_context.get('cliff_summary', {})
+        target_name = shared_context.get('target_name', 'EGFR')
+        
+        high_active = cliff_summary.get('high_activity_compound', {})
+        low_active = cliff_summary.get('low_activity_compound', {})
+        
+        results = {}
+        
+        # 고활성 화합물 도킹
+        if high_active.get('smiles'):
+            docking_result = self.docking_simulator.perform_docking(
+                high_active['smiles'],
+                target_name=target_name
+            )
+            results['high_active_docking'] = {
+                'binding_affinity': docking_result.binding_affinity,
+                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36),  # nM 단위
+                'interactions': docking_result.interactions,
+                'rmsd': docking_result.rmsd_lb
+            }
+        
+        # 저활성 화합물 도킹
+        if low_active.get('smiles'):
+            docking_result = self.docking_simulator.perform_docking(
+                low_active['smiles'],
+                target_name=target_name
+            )
+            results['low_active_docking'] = {
+                'binding_affinity': docking_result.binding_affinity,
+                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36),  # nM 단위
+                'interactions': docking_result.interactions,
+                'rmsd': docking_result.rmsd_lb
+            }
+        
+        # 도킹 결과 비교 분석
+        if 'high_active_docking' in results and 'low_active_docking' in results:
+            high_score = results['high_active_docking']['binding_affinity']
+            low_score = results['low_active_docking']['binding_affinity']
+            results['comparative_analysis'] = {
+                'affinity_difference': high_score - low_score,
+                'predicted_activity_ratio': abs(high_score / low_score) if low_score != 0 else None,
+                'supports_activity_cliff': high_score < low_score  # 낮은 값이 더 강한 결합
+            }
+        
+        return results
+    
+    def _build_interaction_prompt(self, shared_context: Dict[str, Any], docking_results: Dict = None) -> str:
         """생체분자 상호작용 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
         cliff_summary = shared_context['cliff_summary']
         target_name = shared_context['target_name']
@@ -340,6 +396,8 @@ class BiomolecularInteractionExpert:
         
         {literature_info}
         
+        {self._format_docking_results(docking_results) if docking_results else ""}
+        
         **단계별 Chain-of-Thought 분석 수행:**
         실제 구조생물학자/약리학자가 사용하는 분석 절차를 따라 다음 5단계로 체계적으로 분석하세요:
         
@@ -384,6 +442,31 @@ class BiomolecularInteractionExpert:
         
         **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 친화도, 상호작용 에너지, 특정 아미노산 잔기 번호를 포함한 정량적 분석을 제시하되 예상 pKi 값은 언급하지 마세요.**
         """
+    
+    def _format_docking_results(self, docking_results: Dict) -> str:
+        """도킹 시뮬레이션 결과를 프롬프트용 텍스트로 포맷팅"""
+        if not docking_results:
+            return ""
+        
+        formatted = "\n**도킹 시뮬레이션 결과:**\n"
+        
+        if 'high_active_docking' in docking_results:
+            high = docking_results['high_active_docking']
+            formatted += f"- 고활성 화합물: 결합 친화도 {high['binding_affinity']:.1f} kcal/mol, Ki 추정값 {high['ki_estimate']:.2f} nM\n"
+        
+        if 'low_active_docking' in docking_results:
+            low = docking_results['low_active_docking']
+            formatted += f"- 저활성 화합물: 결합 친화도 {low['binding_affinity']:.1f} kcal/mol, Ki 추정값 {low['ki_estimate']:.2f} nM\n"
+        
+        if 'comparative_analysis' in docking_results:
+            comp = docking_results['comparative_analysis']
+            formatted += f"- 친화도 차이: {comp['affinity_difference']:.1f} kcal/mol\n"
+            if comp['supports_activity_cliff']:
+                formatted += "- 도킹 결과는 실험적 Activity Cliff를 지지합니다.\n"
+            else:
+                formatted += "- 도킹 결과는 실험 데이터와 상이한 경향을 보입니다 (추가 분석 필요).\n"
+        
+        return formatted
     
     def _extract_confidence_from_text(self, hypothesis: str) -> float:
         """가설 텍스트에서 실제 신뢰도 값을 추출"""
@@ -458,22 +541,23 @@ class BiomolecularInteractionExpert:
         return steps[:5]
 
 
-class SARIntegrationExpert:
-    """SAR 통합 전문가 에이전트"""
+class QSARExpert:
+    """QSAR 전문가 에이전트"""
     
     def __init__(self, llm_client: UnifiedLLMClient):
         self.llm_client = llm_client
-        self.persona = """당신은 화학정보학과 신약 개발 파이프라인의 실무 전문가입니다.
-        SAR 분석 최적화, 신약 개발 전략 제시, 최신 화학정보학 기법 통합이 전문 분야입니다."""
+        self.persona = """당신은 정량적 구조-활성 관계(QSAR) 분석의 세계적 전문가입니다.
+        분자 descriptor 계산, 통계 모델링, 머신러닝 기반 활성 예측이 전문 분야이며,
+        Activity Cliff 현상을 정량적 모델과 분자 특성 차이로 설명하는 것이 특기입니다."""
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
-        """SAR 통합 관점의 가설 생성"""
-        prompt = self._build_sar_prompt(shared_context)
+        """QSAR 관점의 가설 생성"""
+        prompt = self._build_qsar_prompt(shared_context)
         hypothesis = self.llm_client.generate_response(self.persona, prompt, temperature=0.7)
         
         return {
-            'agent_type': 'sar_integration',
-            'agent_name': 'SAR 통합 전문가',
+            'agent_type': 'qsar',
+            'agent_name': 'QSAR 전문가',
             'hypothesis': hypothesis,
             'confidence': self._extract_confidence_from_text(hypothesis),
             'key_insights': self._extract_key_insights(hypothesis),
@@ -481,8 +565,8 @@ class SARIntegrationExpert:
             'timestamp': time.time()
         }
     
-    def _build_sar_prompt(self, shared_context: Dict[str, Any]) -> str:
-        """SAR 통합 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
+    def _build_qsar_prompt(self, shared_context: Dict[str, Any]) -> str:
+        """QSAR 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
         cliff_summary = shared_context['cliff_summary']
         target_name = shared_context['target_name']
         high_active = cliff_summary['high_activity_compound']
@@ -519,7 +603,7 @@ class SARIntegrationExpert:
         """
         
         return f"""
-        당신은 화학정보학과 신약 개발 파이프라인의 실무 전문가입니다. SAR 분석 최적화, 신약 개발 전략 제시, 최신 화학정보학 기법 통합이 전문 분야인 선임 연구자로서, 실제 제약회사에서 사용되는 체계적 SAR 분석을 수행해주세요.
+        당신은 정량적 구조-활성 관계(QSAR) 분석의 세계적 전문가입니다. 분자 descriptor 계산, 통계 모델링, 머신러닝 기반 활성 예측이 전문 분야이며, Activity Cliff 현상을 정량적 모델과 분자 특성 차이로 설명하는 것이 특기입니다.
         
         {few_shot_example}
         
@@ -547,53 +631,53 @@ class SARIntegrationExpert:
         
         {literature_info}
         
-        **단계별 Chain-of-Thought 분석 수행:**
-        실제 화학정보학자/신약개발자가 사용하는 분석 절차를 따라 다음 5단계로 체계적으로 분석하세요:
+        **단계별 QSAR 분석 수행:**
+        정량적 구조-활성 관계 전문가로서 다음 5단계로 체계적으로 분석하세요:
         
-        1. **SAR 패턴 분석**: 이 Activity Cliff가 보여주는 구조-활성 관계의 핵심 트렌드를 식별하세요. 어떤 구조적 변화가 활성에 가장 큰 영향을 미치는지 정량적으로 분석하세요.
+        1. **분자 Descriptor 분석**: 두 화합물 간 주요 분자 descriptor (2D/3D) 차이를 정량화하세요. 어떤 descriptor가 활성 차이와 가장 강한 상관관계를 보이는지 분석하세요.
         
-        2. **화학정보학 인사이트**: Tanimoto 유사도 {metrics['similarity']:.3f}와 {metrics['activity_difference']} pKi 단위 활성 차이의 조합이 갖는 화학정보학적 의미를 해석하세요. 이것이 SAR 공간에서 의미하는 바를 설명하세요.
+        2. **QSAR 모델 구축**: 기존 데이터셋에서 이 Activity Cliff를 설명할 수 있는 정량적 모델을 제시하세요. 회귀 방정식, 상관계수, 통계적 유의성을 포함하세요.
         
-        3. **신약 개발 전략**: 이 결과가 후속 화합물 설계와 최적화 전략에 주는 구체적인 시사점을 제시하세요. Lead optimization 관점에서 우선순위를 제안하세요.
+        3. **Statistical Learning**: 머신러닝 접근법으로 Activity Cliff 예측 가능성을 평가하세요. Random Forest, SVM, Neural Network 중 최적 알고리즘을 제안하세요.
         
-        4. **최적화 방향**: 활성 개선을 위한 구조 변경 전략을 분자 설계 관점에서 제안하세요. 어떤 부분을 고정하고 어떤 부분을 변경해야 하는지 구체적으로 설명하세요.
+        4. **Chemical Space 분석**: PCA, t-SNE 등으로 화학 공간에서 이 두 화합물의 위치와 Activity Cliff의 분포를 분석하세요. 유사한 cliff의 존재 가능성을 예측하세요.
         
-        5. **예측 모델링**: QSAR/ML 모델 구축 시 이 Activity Cliff 데이터가 주는 교훈과 모델 개선 방향을 제안하세요. 피처 선택과 알고리즘 선택에 대한 가이드라인을 제시하세요.
+        5. **예측 모델 검증**: Cross-validation, 외부 검증 세트를 통한 모델 성능 평가와 Activity Cliff 예측 정확도를 제시하세요. 모델의 적용 한계도 논의하세요.
         
-        **필수 요구사항 - 신약개발 전문가 수준:**
-        1. 정량적 QSAR 모델 제시 (R² 값, 방정식 등)
-        2. 후속 화합물 3-5개의 구체적 구조 (예상 활성값 제외)
-        3. 합성 가능성과 비용 추정 (FTE, 비용 등)
-        4. 치환기별 기여도 순위 (Hammett 상수 활용)
-        5. 특허 회피 전략과 경쟁사 분석
+        **필수 요구사항 - QSAR 전문가 수준:**
+        1. 정량적 QSAR 모델 (R² 값, RMSE, Q² 등 통계 지표 포함)
+        2. 주요 분자 descriptor와 활성도의 상관관계 (Pearson/Spearman 계수)
+        3. 머신러닝 모델 성능 비교 (정확도, 민감도, 특이도)
+        4. Chemical space 시각화와 outlier 분석
+        5. Activity Cliff 예측 모델의 적용 영역(Applicability Domain) 정의
         
         **중요: 전문가 수준에서 뻔한 기본 내용은 피하고, 실질적이고 혁신적인 데이터 분석 접근법에 집중하세요.**
         
-        **금지 사항 - 추상적 전략 금지:**
-        - "최적화가 필요하다" → "구체적 최적화 단계와 타겟 구조"
-        - "비슷한 화합물" → "완전한 SMILES 구조 (pKi 값 예측 금지)"
-        - "개선이 기대된다" → "정량적 개선 예측과 성공 확률"
+        **금지 사항 - 정성적 분석 금지:**
+        - "활성이 증가할 것으로 예상" → "회귀 모델 기준 예측 신뢰구간 95%에서 X-Y 범위"
+        - "유사한 경향" → "Pearson 상관계수 0.XX, p-value 0.XXX"
+        - "모델이 좋다" → "R²=0.XX, RMSE=XX, Q²=XX"
         
-        **실제 제약회사에서 사용할 수 있는 구체적 데이터와 전략을 제시하여 즉시 실행 가능한 액션 플랜을 작성하세요.**
+        **QSAR 분야의 최신 방법론과 정량적 분석을 통해 과학적으로 검증 가능한 결과를 제시하세요.**
         
         **결과 형식 (반드시 이 형식을 정확히 따르세요):**
         
         신뢰도: [구체적 수치와 근거, 예: 92% - QSAR 모델 예측값과 구조적 유사체 데이터 일치]
         
-        핵심 가설: [구체적 SAR 관계, 예: "R2 위치 전자끌기 치환기 도입 시 0.5 log 단위당 1.2 pKi 증가의 선형 관계"]
+        핵심 가설: [정량적 QSAR 관계식, 예: "LogP와 활성도 간 pKi = 2.34×LogP - 1.12 (R²=0.78, p<0.001)"]
         
         상세 분석:
-        1. SAR 패턴 분석: [Hammett 상수, 입체 매개변수의 정량적 상관관계]
-        2. 화학정보학 인사이트: [Tanimoto 계수와 활성 차이의 수학적 모델링]
-        3. 신약 개발 전략: [리드 최적화 단계별 우선순위와 성공 확률]
-        4. 최적화 방향: [특정 치환기의 정량적 기여도와 다음 합성 타겟]
-        5. 예측 모델링: [Random Forest/SVM 모델의 예측 정확도와 신뢰구간]
+        1. 분자 Descriptor 분석: [주요 descriptor 변화량과 통계적 유의성]
+        2. QSAR 모델 구축: [회귀방정식, R², RMSE, Q² 등 완전한 통계 정보]
+        3. Statistical Learning: [알고리즘별 성능 비교와 최적 하이퍼파라미터]
+        4. Chemical Space 분석: [PCA 주성분 기여율과 클러스터 분석 결과]
+        5. 예측 모델 검증: [Cross-validation 결과와 Applicability Domain]
         
-        분자 설계 제안: [구체적 구조식을 포함한 차세대 화합물 3-5개 - pKi 예측값 제외]
+        분자 설계 제안: [QSAR 모델 기반 최적화된 구조식 3-5개 - 활성값 예측 제외]
         
-        실험 제안: [합성 경로, 활성 측정 프로토콜, 예상 비용과 기간]
+        모델 적용 전략: [신규 화합물 스크리닝을 위한 QSAR 모델 활용 방안]
         
-        **중요: 정량적 QSAR 관계식, 구체적 치환기 효과를 포함하여 실제 제약회사에서 사용할 수 있는 수준의 구체적 전략을 제시하되, pKi 예측값은 포함하지 마세요. 전문가가 이미 알고 있는 뻔한 내용은 피하세요.**
+        **중요: 정량적 QSAR 모델과 통계적 검증을 통해 과학적 근거를 제시하되, 정성적 판단이나 추측은 배제하세요. 모든 결론은 수치적 근거와 통계적 유의성을 포함해야 합니다.**
         """
     
     def _extract_confidence_from_text(self, hypothesis: str) -> float:
@@ -1809,26 +1893,22 @@ class HypothesisEvaluationExpert:
     {cliff_info}
     {literature_info}
     
-    **맥락 기반 평가 기준:**
-    1. **과학적 엄밀성 (0-100)**: 가설이 과학적으로 타당하고 검증 가능한가?
-    2. **논리적 일관성 (0-100)**: 가설 내 논리가 일관되고 모순이 없는가?
-    3. **증거 활용도 (0-100)**: Activity Cliff 데이터와 문헌 근거를 얼마나 잘 활용했는가?
-    4. **실용성 (0-100)**: {target_name} 타겟에 대한 신약 개발에 실질적으로 도움이 되는가?
-    5. **데이터 부합성 (0-100)**: 실제 Activity Cliff 관찰 결과와 얼마나 일치하는가?
+    **평가_항목.md 기준 (가중치 적용):**
+    1. **MMP 재검증 (40%)**: SMILES, pIC50 재확인, 물성 재계산(MolWt, LogP, HBD/HBA), 시각화 교차검증 정확성
+    2. **SAR 분석 (40%)**: 활성 변화 및 기저 변화 분석의 타당성, 인용 적절성
+    3. **타겟 키워드 (20%)**: {target_name} 타겟(EGFR/PRMT5/USP1 등) 충족도, 키워드 반영도
     
     **중요**: 가설이 실제 데이터(pKi 값, 구조 유사도, 활성도 차이)와 얼마나 부합하는지 반드시 고려하세요.
     
     **결과를 JSON 형식으로 제공:**
     {{
-        "scientific_rigor": [점수],
-        "logical_coherence": [점수],
-        "evidence_integration": [점수],
-        "practical_applicability": [점수],
-        "data_consistency": [점수],
-        "overall_score": [5개 점수의 평균],
+        "mmp_validation": [점수],
+        "sar_analysis": [점수],
+        "target_keywords": [점수],
+        "overall_score": [가중평균: (mmp_validation*0.4 + sar_analysis*0.4 + target_keywords*0.2)],
         "strengths": ["강점1", "강점2", "강점3"],
         "weaknesses": ["약점1", "약점2"],
-        "context_relevance": "가설이 Activity Cliff 데이터와 얼마나 관련있는지 설명"
+        "evaluation_rationale": "평가_항목.md 기준에서 이 가설이 어떤 점에서 우수하거나 부족한지 설명"
     }}
     """
         
@@ -1847,42 +1927,40 @@ class HypothesisEvaluationExpert:
                 json_text = response_text[json_start:json_end]
                 evaluation = json.loads(json_text)
                 
-                # 필수 필드 확인 및 기본값 설정 (5개 평가 기준 포함)
+                # 평가_항목.md 기준 필드 확인 및 기본값 설정
                 scores = {
-                    'scientific_rigor': evaluation.get('scientific_rigor', 75),
-                    'logical_coherence': evaluation.get('logical_coherence', 75),
-                    'evidence_integration': evaluation.get('evidence_integration', 75),
-                    'practical_applicability': evaluation.get('practical_applicability', 75),
-                    'data_consistency': evaluation.get('data_consistency', 75)
+                    'mmp_validation': evaluation.get('mmp_validation', 75),
+                    'sar_analysis': evaluation.get('sar_analysis', 75),
+                    'target_keywords': evaluation.get('target_keywords', 75)
                 }
                 
-                overall_score = evaluation.get('overall_score', sum(scores.values()) / len(scores))
+                # 가중평균 계산: MMP(40%) + SAR(40%) + Target(20%)
+                overall_score = evaluation.get('overall_score', 
+                    scores['mmp_validation'] * 0.4 + scores['sar_analysis'] * 0.4 + scores['target_keywords'] * 0.2)
                 
                 return {
                     'scores': scores,
                     'overall_score': overall_score,
                     'strengths': evaluation.get('strengths', ['체계적 분석', 'Activity Cliff 고려']),
                     'weaknesses': evaluation.get('weaknesses', ['개선 여지 있음']),
-                    'context_relevance': evaluation.get('context_relevance', 'Activity Cliff 데이터와 연관성 분석됨')
+                    'evaluation_rationale': evaluation.get('evaluation_rationale', '평가_항목.md 기준으로 분석됨')
                 }
                 
         except Exception:
             # 평가 실패 시 기본값 반환
             pass
         
-        # 기본 평가 점수 (5개 기준 포함)
+        # 평가_항목.md 기준 기본 평가 점수
         return {
             'scores': {
-                'scientific_rigor': 75,
-                'logical_coherence': 75,
-                'evidence_integration': 75,
-                'practical_applicability': 75,
-                'data_consistency': 75
+                'mmp_validation': 75,
+                'sar_analysis': 75,
+                'target_keywords': 75
             },
-            'overall_score': 75,
+            'overall_score': 75,  # 가중평균: 75*0.4 + 75*0.4 + 75*0.2 = 75
             'strengths': ['전문가 분석 수행', 'Activity Cliff 데이터 고려'],
             'weaknesses': ['추가 검증 필요'],
-            'context_relevance': 'Activity Cliff 맥락에서 기본 평가 수행됨'
+            'evaluation_rationale': '평가_항목.md 기준으로 기본 평가 수행됨'
         }
     
     def evaluate_hypotheses(self, domain_hypotheses: List[Dict], shared_context: Dict) -> Dict:
@@ -2190,6 +2268,7 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     final_report = {
         'final_hypothesis': evaluation_report.get('final_hypothesis', ''),
         'individual_evaluations': evaluation_report.get('individual_evaluations', []),
+        'domain_hypotheses': domain_hypotheses,  # 도킹 결과가 포함된 가설들 추가
         'synthesis_metadata': evaluation_report.get('synthesis_metadata', {}),
         'process_metadata': {
             'total_time': time.time() - start_time,
@@ -2314,7 +2393,7 @@ def generation_phase(shared_context: Dict, llm_client: UnifiedLLMClient) -> List
     experts = [
         StructuralChemistryExpert(llm_client),
         BiomolecularInteractionExpert(llm_client),
-        SARIntegrationExpert(llm_client)
+        QSARExpert(llm_client)
     ]
     
     domain_hypotheses = []
@@ -2348,3 +2427,118 @@ def generation_phase(shared_context: Dict, llm_client: UnifiedLLMClient) -> List
     
     progress_bar.empty()  # Phase 2 진행바 숨기기
     return domain_hypotheses
+
+
+def display_docking_results(docking_analysis: dict, agent_name: str):
+    """도킹 시뮬레이션 결과를 종합적으로 표시"""
+    if not docking_analysis:
+        return
+    
+    st.markdown("**도킹 시뮬레이션 분석 결과**")
+    
+    # 전체 결과를 한 화면에 표시
+    if 'high_active_docking' in docking_analysis and 'low_active_docking' in docking_analysis:
+        high_result = docking_analysis['high_active_docking']
+        low_result = docking_analysis['low_active_docking']
+        
+        # 1. 결합 친화도 및 Ki 값 비교 (작은 폰트로)
+        st.markdown("**1) 결합 친화도 분석**")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.write("고활성 화합물")
+            st.write(f"• 결합 친화도: {high_result['binding_affinity']:.1f} kcal/mol")
+            st.write(f"• Ki 추정값: {high_result['ki_estimate']:.0f} nM")
+        
+        with col2:
+            st.write("저활성 화합물")  
+            st.write(f"• 결합 친화도: {low_result['binding_affinity']:.1f} kcal/mol")
+            st.write(f"• Ki 추정값: {low_result['ki_estimate']:.0f} nM")
+        
+        # 2. 비교 분석 결과
+        if 'comparative_analysis' in docking_analysis:
+            comp_analysis = docking_analysis['comparative_analysis']
+            
+            with col3:
+                st.write("친화도 차이")
+                diff_value = comp_analysis['affinity_difference']
+                st.write(f"• 차이: {abs(diff_value):.1f} kcal/mol")
+                st.write(f"• 방향: {'고활성 > 저활성' if diff_value < 0 else '저활성 > 고활성'}")
+            
+            with col4:
+                st.write("예측 정확도")
+                supports_cliff = comp_analysis.get('supports_activity_cliff', False)
+                activity_ratio = comp_analysis.get('predicted_activity_ratio', 1)
+                st.write(f"• 활성비: {activity_ratio:.1f}배")
+                st.write(f"• 실험 일치: {'예' if supports_cliff else '아니오'}")
+        
+        # 3. 분자간 상호작용 분석
+        st.markdown("**2) 단백질-리간드 상호작용**")
+        
+        interaction_names = {
+            'hydrogen_bonds': '수소결합',
+            'hydrophobic': '소수성 상호작용',
+            'pi_stacking': 'π-π 적층',
+            'electrostatic': '정전기 상호작용'
+        }
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**고활성 화합물 상호작용:**")
+            if high_result.get('interactions'):
+                for interaction_type, residues in high_result['interactions'].items():
+                    if residues:
+                        interaction_name = interaction_names.get(interaction_type, interaction_type)
+                        residue_text = ', '.join(residues[:3])
+                        if len(residues) > 3:
+                            residue_text += f" 외 {len(residues)-3}개"
+                        st.write(f"• {interaction_name}: {residue_text}")
+            else:
+                st.write("• 상호작용 데이터 없음")
+        
+        with col2:
+            st.write("**저활성 화합물 상호작용:**")
+            if low_result.get('interactions'):
+                for interaction_type, residues in low_result['interactions'].items():
+                    if residues:
+                        interaction_name = interaction_names.get(interaction_type, interaction_type)
+                        residue_text = ', '.join(residues[:3])
+                        if len(residues) > 3:
+                            residue_text += f" 외 {len(residues)-3}개"
+                        st.write(f"• {interaction_name}: {residue_text}")
+            else:
+                st.write("• 상호작용 데이터 없음")
+        
+        # 4. 종합 해석
+        st.markdown("**3) 도킹 분석 종합 해석**")
+        
+        if 'comparative_analysis' in docking_analysis:
+            comp_analysis = docking_analysis['comparative_analysis']
+            diff_value = comp_analysis['affinity_difference']
+            supports_cliff = comp_analysis.get('supports_activity_cliff', False)
+            
+            if supports_cliff and diff_value < -1.0:
+                interpretation = "도킹 시뮬레이션 결과가 실험적 활성 차이를 잘 설명합니다. 고활성 화합물이 타겟 단백질과 더 강한 결합을 형성하여 높은 생물학적 활성을 보이는 것으로 예측됩니다."
+            elif not supports_cliff and abs(diff_value) < 1.0:
+                interpretation = "도킹 결과만으로는 활성 차이를 완전히 설명하기 어렵습니다. 결합 친화도 외에 단백질 동역학, 알로스테릭 효과, 또는 ADMET 특성 차이가 주요 원인일 가능성이 있습니다."
+            elif diff_value > 1.0:
+                interpretation = "도킹 결과가 실험 데이터와 상반됩니다. 저활성 화합물이 더 강한 결합을 보이므로, 결합 후 단백질 기능 조절, 대사 안정성, 또는 세포막 투과성 등 다른 요인의 영향이 클 것으로 예상됩니다."
+            else:
+                interpretation = "도킹 시뮬레이션 결과 해석이 불명확합니다. 추가적인 분자동역학 시뮬레이션이나 실험적 검증이 필요합니다."
+            
+            st.write(interpretation)
+        
+        # 5. 추가 분석 제안
+        st.markdown("**4) 후속 분석 제안**")
+        suggestions = [
+            "분자동역학(MD) 시뮬레이션을 통한 결합 안정성 분석",
+            "자유에너지 섭동(FEP) 계산으로 정밀한 결합 친화도 예측",
+            "단백질-리간드 복합체의 결합 모드 상세 분석",
+            "ADMET 예측을 통한 약동학적 특성 비교"
+        ]
+        
+        for i, suggestion in enumerate(suggestions, 1):
+            st.write(f"{i}. {suggestion}")
+    
+    st.markdown("---")

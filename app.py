@@ -137,6 +137,13 @@ def process_and_display_pair(idx, mol1, mol2, similarity, sim_thresh, activity_c
                     with st.spinner("AI 전문가들이 토론을 시작합니다..."):
                         report = run_online_discussion_system(complete_cliff_data, target_name, api_key, llm_provider)
                         
+                        # 도킹 시뮬레이션 결과가 있는 경우 별도 표시
+                        if isinstance(report, dict) and 'domain_hypotheses' in report:
+                            for hypothesis in report['domain_hypotheses']:
+                                if hypothesis.get('agent_name') == '생체분자 상호작용 전문가' and 'docking_analysis' in hypothesis:
+                                    from online_discussion_system import display_docking_results
+                                    display_docking_results(hypothesis['docking_analysis'], hypothesis['agent_name'])
+                        
                         # 원시 데이터를 접힌 상태로 표시
                         with st.expander("상세 토론 기록 (JSON)", expanded=False):
                             st.json(report)

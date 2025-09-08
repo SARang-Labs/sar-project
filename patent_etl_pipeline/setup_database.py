@@ -1,18 +1,65 @@
 import sqlite3
+import os
 
-db_path = "/Users/lionkim/Downloads/project_archive/sar-project/patent_etl_pipeline/database/patent_data.db"
+# --- 설정 ---
+DATABASE_DIR = "database"
+DATABASE_PATH = os.path.join(DATABASE_DIR, "patent_data.db")
 
-def create_results_tables(database_path):
+def setup_database_schema(database_path):
     """
-    SAR 분석 결과와 AI 가설 저장을 위한 테이블을 생성합니다.
-    이미 테이블이 존재하면 생성하지 않습니다.
+    SAR 프로젝트를 위한 전체 데이터베이스 스키마를 생성하고 업데이트합니다.
     """
+    os.makedirs(os.path.dirname(database_path), exist_ok=True)
+    
     conn = None
     try:
         conn = sqlite3.connect(database_path)
         cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON;")
 
-        # 1. SAR 분석 결과 저장 테이블
+        print("데이터베이스 스키마 설정을 시작합니다...")
+
+        # --- 기본 데이터 테이블 ---
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS compounds (
+            compound_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            smiles TEXT UNIQUE NOT NULL
+        );
+        """)
+        
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS targets (
+            target_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_name TEXT UNIQUE NOT NULL
+        );
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS patents (
+            patent_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patent_number TEXT UNIQUE NOT NULL,
+            title TEXT,
+            publication_date DATE
+        );
+        """)
+        
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS activities (
+            activity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compound_id INTEGER,
+            target_id INTEGER,
+            patent_id INTEGER,
+            ic50 REAL,
+            pic50 REAL,
+            activity_category TEXT,
+            FOREIGN KEY (compound_id) REFERENCES compounds (compound_id),
+            FOREIGN KEY (target_id) REFERENCES targets (target_id),
+            FOREIGN KEY (patent_id) REFERENCES patents (patent_id)
+        );
+        """)
+        print("✅ 기본 테이블(compounds, targets, patents, activities) 생성 완료.")
+
+        # --- 분석 결과 저장 테이블 ---
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS sar_analyses (
             analysis_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,29 +73,28 @@ def create_results_tables(database_path):
             FOREIGN KEY (compound_id_2) REFERENCES compounds (compound_id)
         );
         """)
-        print("✅ 'sar_analyses' 테이블 생성 또는 확인 완료.")
 
-        # 2. AI 가설 저장 테이블
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS ai_hypotheses (
             hypothesis_id INTEGER PRIMARY KEY AUTOINCREMENT,
             analysis_id INTEGER NOT NULL,
             agent_name TEXT,
             hypothesis_text TEXT,
-            context_info TEXT, -- RAG로 수집된 참고 문헌 정보 (JSON 형태의 텍스트로 저장)
+            context_info TEXT,
             hypothesis_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (analysis_id) REFERENCES sar_analyses (analysis_id)
         );
         """)
-        print("✅ 'ai_hypotheses' 테이블 생성 또는 확인 완료.")
+        print("✅ 분석 결과 테이블(sar_analyses, ai_hypotheses) 생성 완료.")
 
         conn.commit()
+        print("\n데이터베이스 스키마 설정이 성공적으로 완료되었습니다.")
 
     except Exception as e:
         print(f"오류 발생: {e}")
+        if conn: conn.rollback()
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 if __name__ == "__main__":
-    create_results_tables(db_path)
+    setup_database_schema(DATABASE_PATH)

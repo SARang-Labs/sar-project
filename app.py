@@ -297,85 +297,69 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
 
 
 # --- DB 연동을 위한 데이터 로딩 함수 ---
-db_path = "/Users/lionkim/Downloads/project_archive/sar-project/patent_etl_pipeline/database/patent_data.db" 
+db_path = "/Users/lionkim/Desktop/debate_app/sar-project/patent_etl_pipeline/database/patent_data.db" 
 
 @st.cache_data
-def get_target_list(database_path):
-    """DB의 targets 테이블에서 전체 타겟 이름 목록만 빠르게 가져옵니다."""
-    if not os.path.exists(database_path):
-        st.sidebar.error(f"DB 파일을 찾을 수 없습니다: {database_path}")
-        return []
+def get_patent_list(database_path):
+    """DB에서 전체 특허 번호 목록만 빠르게 가져옵니다."""
+    if not os.path.exists(database_path): return []
     try:
         conn = sqlite3.connect(database_path, check_same_thread=False)
-        # targets 테이블에서 target_name만 조회
-        query = "SELECT target_name FROM targets ORDER BY target_name;"
+        query = "SELECT patent_number FROM patents ORDER BY patent_number DESC;"
         df = pd.read_sql_query(query, conn)
-        return df['target_name'].tolist()
+        return df['patent_number'].tolist()
     except Exception as e:
-        st.sidebar.error(f"DB 타겟 목록 로딩 중 오류: {e}")
+        st.sidebar.error(f"DB 특허 목록 로딩 중 오류: {e}")
         return []
     finally:
-        if 'conn' in locals() and conn:
-            conn.close()
+        if 'conn' in locals() and conn: conn.close()
 
 @st.cache_data
-def get_data_for_target(database_path, target_name):
-    """사용자가 선택한 특정 타겟의 데이터만 DB에서 JOIN하여 로드합니다."""
-    if not os.path.exists(database_path): return None
+def get_targets_for_patent(database_path, patent_number):
+    """입력된 특허 번호에 해당하는 모든 타겟의 이름을 DB에서 찾아 반환합니다."""
+    if not os.path.exists(database_path) or not patent_number: return []
     try:
         conn = sqlite3.connect(database_path, check_same_thread=False)
-        # 제공해주신 쿼리에 WHERE 절을 추가하여 특정 타겟 데이터만 선택
+        query = """
+        SELECT DISTINCT t.target_name
+        FROM targets t
+        JOIN activities a ON t.target_id = a.target_id
+        JOIN patents p ON a.patent_id = p.patent_id
+        WHERE p.patent_number = ?
+        ORDER BY t.target_name;
+        """
+        df = pd.read_sql_query(query, conn, params=(patent_number,))
+        return df['target_name'].tolist()
+    except Exception as e:
+        st.sidebar.error(f"특허 '{patent_number}'의 타겟 목록 로딩 중 오류: {e}")
+        return []
+    finally:
+        if 'conn' in locals() and conn: conn.close()
+
+@st.cache_data
+def get_data_for_patent_and_target(database_path, patent_number, target_name):
+    """특정 특허와 특정 타겟에 대한 데이터만 DB에서 JOIN하여 가져옵니다."""
+    if not all([os.path.exists(database_path), patent_number, target_name]): return None
+    try:
+        conn = sqlite3.connect(database_path, check_same_thread=False)
         query = """
         SELECT
-            c.smiles AS "SMILES",
-            t.target_name AS "Target",
-            a.pic50 AS "pIC50",
-            a.ic50 AS "IC50",
-            a.activity_category AS "Activity",
-            c.compound_id AS "ID"
+            c.smiles AS "SMILES", c.compound_id AS "ID",
+            t.target_name AS "Target", p.patent_number AS "Patent",
+            a.ic50 AS "IC50", a.pic50 AS "pIC50", a.activity_category AS "Activity"
         FROM activities a
         JOIN compounds c ON a.compound_id = c.compound_id
         JOIN targets t ON a.target_id = t.target_id
-        WHERE t.target_name = ?;
+        JOIN patents p ON a.patent_id = p.patent_id
+        WHERE p.patent_number = ? AND t.target_name = ?;
         """
-        # SQL Injection 공격 방지를 위해 파라미터를 사용하여 안전하게 쿼리 실행
-        df = pd.read_sql_query(query, conn, params=(target_name,))
+        df = pd.read_sql_query(query, conn, params=(patent_number, target_name))
         return df
     except Exception as e:
-        st.error(f"'{target_name}' 데이터 로딩 중 오류: {e}")
+        st.error(f"데이터 로딩 중 오류: {e}")
         return None
     finally:
-        if 'conn' in locals() and conn:
-            conn.close()
-
-@st.cache_data
-def get_data_from_db(database_path):
-    """SQLite 데이터베이스에서 데이터를 로드합니다."""
-    if not os.path.exists(database_path):
-        st.sidebar.error(f"DB 파일을 찾을 수 없습니다: {database_path}")
-        return None
-    try:
-        conn = sqlite3.connect(database_path, check_same_thread=False)
-        query = """
-        SELECT
-            c.smiles AS "SMILES",
-            t.target_name AS "Target",
-            a.pic50 AS "pIC50",
-            a.ic50 AS "IC50",
-            a.activity_category AS "Activity",
-            c.compound_id AS "ID"
-        FROM activities a
-        JOIN compounds c ON a.compound_id = c.compound_id
-        JOIN targets t ON a.target_id = t.target_id;
-        """
-        df = pd.read_sql_query(query, conn)
-        return df
-    except Exception as e:
-        st.sidebar.error(f"DB 로딩 중 오류: {e}")
-        return None
-    finally:
-        if 'conn' in locals() and conn:
-            conn.close()
+        if 'conn' in locals() and conn: conn.close()
 
 # --- Main App ---
 def main():
@@ -385,14 +369,18 @@ def main():
         
         st.header("📁 데이터 선택")
         
-        # 1단계: 전체 타겟 목록만 빠르게 로드하여 Selectbox를 생성합니다.
-        target_list = get_target_list(db_path)
-        selected_target = None
+        # 1. 특허 번호 입력 (DB에 있는 목록에서 선택하거나 직접 입력)
+        patent_list = get_patent_list(db_path)
+        selected_patent = st.selectbox("1. 분석할 특허 번호를 선택하세요:", options=[""] + patent_list)
         
-        if target_list:
-            selected_target = st.selectbox('분석할 타겟 선택', target_list)
-        else:
-            st.warning("데이터베이스에서 타겟 목록을 불러올 수 없습니다.")
+        # 2. 선택된 특허에 포함된 타겟 목록 표시
+        selected_target = None
+        if selected_patent:
+            target_list = get_targets_for_patent(db_path, selected_patent)
+            if target_list:
+                selected_target = st.selectbox("2. 분석할 타겟을 선택하세요:", options=[""] + target_list)
+            else:
+                st.warning(f"'{selected_patent}' 특허에 대한 타겟 데이터가 없습니다.")
 
         st.header("⚙️ AI 모델 설정")
         # target_name_input은 이제 기본값 또는 보조 용도로만 사용됩니다.
@@ -400,7 +388,7 @@ def main():
         llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Gemini"))
         api_key = st.text_input("API 키 입력:", type="password", placeholder="OpenAI 또는 Gemini API 키")
 
-    # --- [수정된 부분 시작] 탭 구조 정의 ---
+    # --- 탭 구조 정의 ---
     tab_titles = ["실시간 분석", "분석 이력 조회"]
     
     # 외부 시스템 가용성에 따라 동적으로 탭 추가 (기존 로직 활용)
@@ -415,64 +403,75 @@ def main():
     with tab_map["실시간 분석"]:
         st.header("실시간 분석 대시보드")
         df, available_activity_cols = None, []
-        
-        # 2단계: 사용자가 타겟을 선택한 경우에만 해당 데이터를 DB에서 로드합니다.
-        if selected_target:
-            with st.spinner(f"'{selected_target}' 데이터 로딩 중..."):
-                df_from_db = get_data_for_target(db_path, selected_target)
-            
+
+        # 특허와 타겟이 모두 선택되었을 때만 데이터 로드 및 처리를 시작합니다.
+        if selected_patent and selected_target:
+            with st.spinner(f"특허 '{selected_patent}'의 '{selected_target}' 데이터 로딩 중..."):
+                # 1. 특허와 타겟에 맞는 데이터를 DB에서 가져옵니다.
+                df_from_db = get_data_for_patent_and_target(db_path, selected_patent, selected_target)
+
             if df_from_db is not None:
+                # 2. 가져온 데이터를 utils.py의 load_data 함수로 후처리합니다.
                 df_processed, available_activity_cols = load_data(df_from_db)
+
                 if df_processed is not None:
-                    # 중복 제거 로직
+                    # 3. 데이터 로드 직후, 분석 전에 중복 화합물을 제거합니다.
                     ref_col = available_activity_cols[0] if available_activity_cols else 'pIC50'
                     if ref_col in df_processed.columns:
+                        # 활성도가 높은 순으로 정렬
                         df_sorted = df_processed.sort_values(ref_col, ascending=False)
+                        # SMILES 기준 중복 제거 (가장 활성도 높은 데이터만 남김)
                         df = df_sorted.drop_duplicates(subset=['SMILES'], keep='first')
                     else:
+                        # 활성 컬럼이 없을 경우, 그냥 SMILES 기준으로 중복 제거
                         df = df_processed.drop_duplicates(subset=['SMILES'], keep='first')
-                    
-                    st.sidebar.success(f"총 {len(df_from_db)}개 데이터 중 {len(df)}개의 고유 화합물 로드 완료!")
-                
-                    # Activity 컬럼 자동 생성
+
+                    st.sidebar.success(f"총 {len(df_from_db)}개 행 중 {len(df)}개의 고유 화합물 로드 완료!")
+
+                    # 4. Activity 컬럼이 없는 경우, pKi/pIC50 기준으로 자동 생성합니다.
                     if 'Activity' not in df.columns and any(col in df.columns for col in ['pKi', 'pIC50']):
-                        # ... (Activity 컬럼 생성 로직은 기존과 동일) ...
                         ref_col_act = 'pKi' if 'pKi' in df.columns else 'pIC50'
-                        conditions = [ (df[ref_col_act] > 7.0), (df[ref_col_act] > 5.7) & (df[ref_col_act] <= 7.0), (df[ref_col_act] > 5.0) & (df[ref_col_act] <= 5.7), (df[ref_col_act] <= 5.0) | (df[ref_col_act].isna()) ]
+                        conditions = [
+                            (df[ref_col_act] > 7.0),
+                            (df[ref_col_act] > 5.7) & (df[ref_col_act] <= 7.0),
+                            (df[ref_col_act] > 5.0) & (df[ref_col_act] <= 5.7),
+                            (df[ref_col_act] <= 5.0) | (df[ref_col_act].isna())
+                        ]
                         labels = ['Highly Active', 'Moderately Active', 'Weakly Active', 'Inactive']
                         df['Activity'] = np.select(conditions, labels, default='Unclassified')
                         st.info("Info: pKi/pIC50 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
 
-        # 4단계: 최종 처리된 데이터(df)가 있을 경우에만 분석 UI를 렌더링합니다.
+        # 최종 처리된 데이터(df)가 있을 경우에만 분석 UI를 렌더링합니다.
         if df is not None:
             st.success(f"'{selected_target}'에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
-            
-            # 기존의 탭 로직을 '실시간 분석' 탭 내부로 이동
+
+            # '실시간 분석' 탭 내부에 세부 분석 탭들을 생성합니다.
             tabs_to_create_inner = []
             if ONLINE_DISCUSSION_AVAILABLE: tabs_to_create_inner.append("SAR 분석 (토론 시스템 적용)")
             tabs_to_create_inner.append("SAR 분석 (기본)")
-            
+
             created_tabs_inner = st.tabs(tabs_to_create_inner)
             tab_map_inner = {name: tab for name, tab in zip(tabs_to_create_inner, created_tabs_inner)}
-            
+
             tab_advanced = tab_map_inner.get("SAR 분석 (토론 시스템 적용)")
             tab_basic = tab_map_inner.get("SAR 분석 (기본)")
 
+            # 분석 함수에 전달할 타겟 이름은 사이드바에서 선택된 값을 사용합니다.
             target_name_to_use = selected_target
 
             if tab_advanced:
                 with tab_advanced:
-                    # ... (기존 '토론 시스템 적용' 탭의 UI 로직과 동일) ...
+                    st.subheader("구조-활성 관계 분석 (토론 시스템 적용)")
                     analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
                     st.markdown("---")
                     if analysis_type_adv == "정량 분석":
                         render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
                     else:
                         render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
-            
+
             if tab_basic:
                 with tab_basic:
-                    # ... (기존 '기본' 탭의 UI 로직과 동일) ...
+                    st.subheader("구조-활성 관계 분석 (기본)")
                     analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
                     st.markdown("---")
                     if analysis_type_basic == "정량 분석":
@@ -480,7 +479,7 @@ def main():
                     else:
                         render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
         else:
-            st.info("분석을 시작하려면 사이드바에서 분석할 타겟을 선택하세요.")
+            st.info("분석을 시작하려면 사이드바에서 특허와 타겟을 모두 선택하세요.")
 
     # --- 탭 2: 분석 이력 조회 ---
     with tab_map["분석 이력 조회"]:

@@ -85,7 +85,7 @@ def process_excel_sheet(excel_file_path, smiles_sheet_name, ic50_sheet_name, tar
 
 if __name__ == '__main__':
     # Example usage (this part will not be executed during the subtask but is good for testing the script)
-    excel_file = "/content/1020170094694_extracted_250611.xlsx"
+    excel_file = "patent_etl_pipeline/data/1020170094694_extracted_250611.xlsx"
     smiles_sheet = '표3'
     ic50_sheet = '표5~표14'
     target = 'KU-19-19' # Example target

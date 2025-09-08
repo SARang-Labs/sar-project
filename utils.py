@@ -76,6 +76,40 @@ def save_results_to_db(db_path, cliff_data, hypothesis_text, llm_provider, conte
         if conn:
             conn.close()
 
+# --- 데이터 조회 함수 ---
+def get_analysis_history(db_path):
+    """
+    Fetches the entire SAR analysis and AI hypothesis history from the database.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        # Use a LEFT JOIN to include analyses that may not have a hypothesis yet
+        query = """
+        SELECT
+            sa.analysis_id,
+            sa.analysis_timestamp,
+            sa.compound_id_1,
+            sa.compound_id_2,
+            sa.similarity,
+            sa.activity_difference,
+            sa.score,
+            ah.hypothesis_text,
+            ah.agent_name,
+            ah.context_info
+        FROM sar_analyses sa
+        LEFT JOIN ai_hypotheses ah ON sa.analysis_id = ah.analysis_id
+        ORDER BY sa.analysis_timestamp DESC;
+        """
+        df = pd.read_sql_query(query, conn)
+        return df
+    except Exception as e:
+        st.error(f"분석 이력 로딩 중 오류 발생: {e}")
+        return pd.DataFrame() # Return an empty DataFrame on error
+    finally:
+        if conn:
+            conn.close()
+
 
 # --- Helper Functions ---
 def canonicalize_smiles(smiles):

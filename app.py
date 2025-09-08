@@ -6,10 +6,9 @@ import plotly.express as px
 from rdkit import Chem
 from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
-import sqlite3 # DB 연동을 위해 추가
+import sqlite3
 import json
 
-# utils.py로부터 모든 필요한 함수를 임포트합니다.
 from utils import (
     load_data,
     find_activity_cliffs,
@@ -19,10 +18,11 @@ from utils import (
     check_stereoisomers,
     calculate_molecular_properties,
     get_structural_difference_keyword,
-    save_results_to_db
+    save_results_to_db,
+    get_analysis_history
 )
 
-# --- 외부 시스템 임포트 (원본과 동일) ---
+# --- 외부 시스템 임포트 ---
 try:
     from online_discussion_system import run_online_discussion_system
     ONLINE_DISCUSSION_AVAILABLE = True
@@ -40,11 +40,11 @@ except ImportError as e:
     PROMPT_SYSTEM_AVAILABLE = False
     print(f"❌ 최적 프롬프트 토론 시스템 로드 실패: {str(e)}")
 
-# --- 페이지 기본 설정 (원본과 동일) ---
+# --- 페이지 기본 설정 ---
 st.set_page_config(page_title="AI 기반 SAR 분석 시스템", page_icon="🧪", layout="wide")
 
 
-# --- 공통 로직 처리 헬퍼 함수 (원본과 동일) ---
+# --- 공통 로직 처리 헬퍼 함수 ---
 def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider):
     mol1 = pd.Series(cliff_data['mol_1'])
     mol2 = pd.Series(cliff_data['mol_2'])
@@ -143,7 +143,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                         st.error("데이터베이스 저장에 실패했습니다.")
 
 
-# --- UI 렌더링 함수 (원본과 동일) ---
+# --- UI 렌더링 함수  ---
 
 def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider):
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
@@ -296,7 +296,7 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 )
 
 
-# --- [수정 시작] DB 연동을 위한 데이터 로딩 함수 ---
+# --- DB 연동을 위한 데이터 로딩 함수 ---
 db_path = "/Users/lionkim/Downloads/project_archive/sar-project/patent_etl_pipeline/database/patent_data.db" 
 
 @st.cache_data
@@ -356,8 +356,6 @@ def get_data_from_db(database_path):
         return None
     try:
         conn = sqlite3.connect(database_path, check_same_thread=False)
-        # 원본 utils.py의 load_data가 처리하는 컬럼들을 모두 가져옵니다.
-        # 컬럼명을 원본 load_data 함수가 기대하는 형식과 유사하게 맞춰줍니다.
         query = """
         SELECT
             c.smiles AS "SMILES",
@@ -378,8 +376,6 @@ def get_data_from_db(database_path):
     finally:
         if 'conn' in locals() and conn:
             conn.close()
-# --- [수정 끝] ---
-
 
 # --- Main App ---
 def main():
@@ -404,92 +400,144 @@ def main():
         llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Gemini"))
         api_key = st.text_input("API 키 입력:", type="password", placeholder="OpenAI 또는 Gemini API 키")
 
-    st.header("분석 결과 대시보드")
-    df, available_activity_cols = None, []
+    # --- [수정된 부분 시작] 탭 구조 정의 ---
+    tab_titles = ["실시간 분석", "분석 이력 조회"]
     
-    # 2단계: 사용자가 타겟을 선택한 경우에만 해당 데이터를 DB에서 로드합니다.
-    if selected_target:
-        with st.spinner(f"'{selected_target}' 데이터 로딩 중..."):
-            # 특정 타겟의 데이터만 DB에서 가져옵니다.
-            df_from_db = get_data_for_target(db_path, selected_target)
-        
-        if df_from_db is not None:
-            # 3단계: 로드된 데이터를 후처리 함수(utils.py의 load_data)로 전달합니다.
-            df_processed, available_activity_cols = load_data(df_from_db)
+    # 외부 시스템 가용성에 따라 동적으로 탭 추가 (기존 로직 활용)
+    # if ONLINE_DISCUSSION_AVAILABLE: tab_titles.insert(1, "SAR 분석 (토론 시스템 적용)") # 토론 시스템을 별도 탭으로 분리할 경우
+    if PROMPT_SYSTEM_AVAILABLE: tab_titles.append("최적 프롬프트 토론")
 
-            if df_processed is not None:
-                # --- [수정된 부분 시작] ---
-                # 이 단계에서 미리 중복을 제거합니다.
-                ref_col = available_activity_cols[0] if available_activity_cols else 'pIC50'
-                if ref_col in df_processed.columns:
-                    # 1. 활성도가 높은 순으로 정렬
-                    df_sorted = df_processed.sort_values(ref_col, ascending=False)
-                    # 2. SMILES 기준 중복 제거 (가장 활성도 높은 데이터만 남김)
-                    df = df_sorted.drop_duplicates(subset=['SMILES'], keep='first')
-                else:
-                    df = df_processed.drop_duplicates(subset=['SMILES'], keep='first')
-                
-                st.sidebar.success(f"총 {len(df_from_db)}개 데이터 중 {len(df)}개의 고유 화합물 로드 완료!")
-                # --- [수정된 부분 끝] ---
+    created_tabs = st.tabs(tab_titles)
+    tab_map = {name: tab for name, tab in zip(tab_titles, created_tabs)}
+    # --- [수정된 부분 끝] ---
+
+    # --- 탭 1: 실시간 분석 ---
+    with tab_map["실시간 분석"]:
+        st.header("실시간 분석 대시보드")
+        df, available_activity_cols = None, []
+        
+        # 2단계: 사용자가 타겟을 선택한 경우에만 해당 데이터를 DB에서 로드합니다.
+        if selected_target:
+            with st.spinner(f"'{selected_target}' 데이터 로딩 중..."):
+                df_from_db = get_data_for_target(db_path, selected_target)
             
-            # Activity 컬럼이 없는 경우, pKi/pIC50 기준으로 자동 생성합니다.
-            if df is not None and 'Activity' not in df.columns and any(col in df.columns for col in ['pKi', 'pIC50']):
-                ref_col = 'pKi' if 'pKi' in df.columns else 'pIC50'
-                conditions = [
-                    (df[ref_col] > 7.0),
-                    (df[ref_col] > 5.7) & (df[ref_col] <= 7.0),
-                    (df[ref_col] > 5.0) & (df[ref_col] <= 5.7),
-                    (df[ref_col] <= 5.0) | (df[ref_col].isna())
-                ]
-                labels = ['Highly Active', 'Moderately Active', 'Weakly Active', 'Inactive']
-                df['Activity'] = np.select(conditions, labels, default='Unclassified')
-                st.info("Info: pKi/pIC50 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
+            if df_from_db is not None:
+                df_processed, available_activity_cols = load_data(df_from_db)
+                if df_processed is not None:
+                    # 중복 제거 로직
+                    ref_col = available_activity_cols[0] if available_activity_cols else 'pIC50'
+                    if ref_col in df_processed.columns:
+                        df_sorted = df_processed.sort_values(ref_col, ascending=False)
+                        df = df_sorted.drop_duplicates(subset=['SMILES'], keep='first')
+                    else:
+                        df = df_processed.drop_duplicates(subset=['SMILES'], keep='first')
+                    
+                    st.sidebar.success(f"총 {len(df_from_db)}개 데이터 중 {len(df)}개의 고유 화합물 로드 완료!")
+                
+                    # Activity 컬럼 자동 생성
+                    if 'Activity' not in df.columns and any(col in df.columns for col in ['pKi', 'pIC50']):
+                        # ... (Activity 컬럼 생성 로직은 기존과 동일) ...
+                        ref_col_act = 'pKi' if 'pKi' in df.columns else 'pIC50'
+                        conditions = [ (df[ref_col_act] > 7.0), (df[ref_col_act] > 5.7) & (df[ref_col_act] <= 7.0), (df[ref_col_act] > 5.0) & (df[ref_col_act] <= 5.7), (df[ref_col_act] <= 5.0) | (df[ref_col_act].isna()) ]
+                        labels = ['Highly Active', 'Moderately Active', 'Weakly Active', 'Inactive']
+                        df['Activity'] = np.select(conditions, labels, default='Unclassified')
+                        st.info("Info: pKi/pIC50 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
 
-    # 4단계: 최종 처리된 데이터(df)가 있을 경우에만 분석 탭들을 렌더링합니다.
-    if df is not None:
-        st.success(f"'{selected_target}'에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
-        
-        tabs_to_create = []
-        if ONLINE_DISCUSSION_AVAILABLE: tabs_to_create.append("SAR 분석 (토론 시스템 적용)")
-        tabs_to_create.append("SAR 분석 (기본)")
-        if PROMPT_SYSTEM_AVAILABLE: tabs_to_create.append("최적 프롬프트 토론")
-        
-        created_tabs = st.tabs(tabs_to_create)
-        tab_map = {name: tab for name, tab in zip(tabs_to_create, created_tabs)}
-        
-        tab_advanced = tab_map.get("SAR 분석 (토론 시스템 적용)")
-        tab_basic = tab_map.get("SAR 분석 (기본)")
-        tab_prompt = tab_map.get("최적 프롬프트 토론")
+        # 4단계: 최종 처리된 데이터(df)가 있을 경우에만 분석 UI를 렌더링합니다.
+        if df is not None:
+            st.success(f"'{selected_target}'에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
+            
+            # 기존의 탭 로직을 '실시간 분석' 탭 내부로 이동
+            tabs_to_create_inner = []
+            if ONLINE_DISCUSSION_AVAILABLE: tabs_to_create_inner.append("SAR 분석 (토론 시스템 적용)")
+            tabs_to_create_inner.append("SAR 분석 (기본)")
+            
+            created_tabs_inner = st.tabs(tabs_to_create_inner)
+            tab_map_inner = {name: tab for name, tab in zip(tabs_to_create_inner, created_tabs_inner)}
+            
+            tab_advanced = tab_map_inner.get("SAR 분석 (토론 시스템 적용)")
+            tab_basic = tab_map_inner.get("SAR 분석 (기본)")
 
-        # 분석 함수에 전달할 타겟 이름은 이제 사이드바에서 선택된 값을 사용합니다.
-        target_name_to_use = selected_target
+            target_name_to_use = selected_target
 
-        if tab_advanced:
-            with tab_advanced:
-                st.subheader("구조-활성 관계 분석 (토론 시스템 적용)")
-                analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
-                st.markdown("---")
-                if analysis_type_adv == "정량 분석":
-                    render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
-                else:
-                    render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
-        
-        if tab_basic:
-            with tab_basic:
-                st.subheader("구조-활성 관계 분석 (기본)")
-                analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
-                st.markdown("---")
-                if analysis_type_basic == "정량 분석":
-                    render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
-                else:
-                    render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
+            if tab_advanced:
+                with tab_advanced:
+                    # ... (기존 '토론 시스템 적용' 탭의 UI 로직과 동일) ...
+                    analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
+                    st.markdown("---")
+                    if analysis_type_adv == "정량 분석":
+                        render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
+                    else:
+                        render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
+            
+            if tab_basic:
+                with tab_basic:
+                    # ... (기존 '기본' 탭의 UI 로직과 동일) ...
+                    analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
+                    st.markdown("---")
+                    if analysis_type_basic == "정량 분석":
+                        render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
+                    else:
+                        render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
+        else:
+            st.info("분석을 시작하려면 사이드바에서 분석할 타겟을 선택하세요.")
 
-        if tab_prompt:
-            with tab_prompt:
-                st.markdown("# 최적 프롬프트 토론 시스템")
-                # (이하 프롬프트 토론 탭 로직은 기존과 동일)
-    else:
-        st.info("분석을 시작하려면 사이드바에서 분석할 타겟을 선택하세요.")
+    # --- 탭 2: 분석 이력 조회 ---
+    with tab_map["분석 이력 조회"]:
+        st.header("분석 이력 조회")
+
+        with st.spinner("과거 분석 이력을 불러오는 중..."):
+            history_df = get_analysis_history(db_path)
+
+        if history_df.empty:
+            st.info("저장된 분석 이력이 없습니다. '실시간 분석' 탭에서 분석을 실행하고 결과를 저장해주세요.")
+        else:
+            st.info(f"총 {len(history_df)}개의 분석 이력을 찾았습니다.")
+            
+            search_id = st.text_input("검색할 화합물 ID (compound_id_1 또는 compound_id_2):")
+            
+            display_df = history_df
+            if search_id:
+                try:
+                    search_id_int = int(search_id)
+                    display_df = history_df[
+                        (history_df['compound_id_1'] == search_id_int) | 
+                        (history_df['compound_id_2'] == search_id_int)
+                    ]
+                except ValueError:
+                    st.warning("ID는 숫자로 입력해주세요.")
+
+            st.dataframe(display_df)
+
+            st.markdown("---")
+            st.subheader("상세 정보 보기")
+            
+            # 검색 결과가 있으면 검색 결과 내에서, 없으면 전체 이력 내에서 선택
+            detail_options = [""] + display_df['analysis_id'].tolist()
+            selected_analysis_id = st.selectbox(
+                "상세히 볼 분석 ID를 선택하세요:", 
+                options=detail_options
+            )
+
+            if selected_analysis_id:
+                detail_data = history_df[history_df['analysis_id'] == selected_analysis_id].iloc[0]
+                
+                st.json({
+                    "분석 ID": detail_data['analysis_id'],
+                    "분석 시간": detail_data['analysis_timestamp'],
+                    "분석 쌍": f"ID {detail_data['compound_id_1']} vs ID {detail_data['compound_id_2']}",
+                    "유사도": f"{detail_data['similarity']:.3f}" if pd.notna(detail_data['similarity']) else "N/A",
+                    "활성 차이": f"{detail_data['activity_difference']:.3f}" if pd.notna(detail_data['activity_difference']) else "N/A",
+                    "점수": f"{detail_data['score']:.2f}" if pd.notna(detail_data['score']) else "N/A",
+                    "분석 에이전트": detail_data['agent_name']
+                })
+
+                st.markdown("##### AI 생성 가설/리포트")
+                try:
+                    report_json = json.loads(detail_data['hypothesis_text'])
+                    st.json(report_json)
+                except (json.JSONDecodeError, TypeError):
+                    st.info(detail_data['hypothesis_text'] or "저장된 가설이 없습니다.")
 
 if __name__ == "__main__":
     main()

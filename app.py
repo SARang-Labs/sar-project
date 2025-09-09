@@ -2,13 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
+import io
 import plotly.express as px
 from rdkit import Chem
 from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 import json
 from sqlalchemy.orm import Session
-from patent_etl_pipeline.database import SessionLocal, Patent, Compound, Target, Activity, SAR_Analysis, AI_Hypothesis
+from patent_etl_pipeline.database import (
+    SessionLocal, Patent, Compound, Target, Activity, 
+    SAR_Analysis, AI_Hypothesis, DATABASE_PATH, init_db
+)
+from patent_etl_pipeline.run_etl import run_etl
 
 from utils import (
     load_data,
@@ -344,9 +349,47 @@ def get_data_for_patent_and_target(patent_number, target_name):
 
 # --- Main App ---
 def main():
+    if not os.path.exists(DATABASE_PATH):
+        st.title("🚀 SAR 분석 시스템 초기 설정")
+        st.info("최초 실행을 위해 데이터베이스를 자동으로 생성합니다. 잠시만 기다려주세요...")
+        try:
+            init_db() # database.py의 함수 호출
+            st.success("데이터베이스가 성공적으로 생성되었습니다!")
+            st.info("이제 ETL 스크립트(run_etl.py)를 실행하여 데이터를 채워주시거나, 앱 내 데이터 로드 기능을 이용해 주세요.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"데이터베이스 생성 중 오류 발생: {e}")
+        return # DB 생성 후 일단 정지
+
     with st.sidebar:
         st.title("AI SAR 분석 시스템")
-        st.info("AI 기반 구조-활성 관계(SAR) 분석 및 예측 솔루션입니다.")    
+        st.info("AI 기반 구조-활성 관계(SAR) 분석 및 예측 솔루션입니다.")   
+
+        # --- 데이터 로드 UI ---
+        with st.expander("📚 데이터 관리 (신규 특허 로드)", expanded=False):
+            patent_number_input = st.text_input("특허 번호 입력", placeholder="예: 1020170094694")
+            uploaded_file = st.file_uploader("특허 엑셀 파일 업로드", type=["xlsx"])
+            
+            if st.button("데이터베이스에 저장"):
+                if patent_number_input and uploaded_file:
+                    with st.spinner("ETL 프로세스 실행 중... 엑셀 파일을 읽고 DB에 저장합니다."):
+                        # 업로드된 파일을 임시 저장하지 않고 메모리에서 바로 사용
+                        file_buffer = io.BytesIO(uploaded_file.getvalue())
+                        
+                        # run_etl.py의 함수 호출
+                        progress_bar = st.progress(0, text="ETL 시작...")
+                        success, message = run_etl(patent_number_input, file_buffer, progress_bar)
+                        
+                        if success:
+                            st.success(message)
+                            # 드롭다운 목록을 업데이트하기 위해 get_patent_list 함수의 캐시를 지웁니다.
+                            get_patent_list.clear()
+                            st.rerun()
+                        else:
+                            st.error(message)
+                else:
+                    st.warning("특허 번호와 엑셀 파일을 모두 입력/업로드해주세요.")
+ 
         st.header("📁 데이터 선택")
         
         # 1. 특허 번호 입력 (DB에 있는 목록에서 선택하거나 직접 입력)

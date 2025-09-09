@@ -1,11 +1,10 @@
 import os
-import sqlite3
 import pandas as pd
 import sys
 import logging
 import argparse
 from sqlalchemy.orm import Session
-from database import SessionLocal, Patent, Compound, Target, Activity
+from .database import SessionLocal, Patent, Compound, Target, Activity
 
 # --- 설정 ---
 
@@ -17,13 +16,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 현재 디렉토리를 경로에 추가하여 parsers 모듈을 임포트합니다.
+sys.path.append('.')
 try:
-    import parsers
+    from . import parsers
     logger.info("Successfully imported 'parsers' module.")
 except ImportError:
     logger.error("Could not import 'parsers' module.", exc_info=True)
     sys.exit(1)
 
+# 경로 설정
 DATABASE_DIR = "database"
 DATABASE_PATH = os.path.join(DATABASE_DIR, "patent_data.db")
 EXCEL_FILES_DIR = "data"
@@ -42,9 +44,10 @@ def get_or_create(db: Session, model, **kwargs):
         db.refresh(instance)
         return instance
 
-def run_etl(patent_number, excel_file_path):
+def run_etl(patent_number, file_source, progress_bar=None):
     """
     SQLAlchemy를 사용하여 ETL 프로세스를 실행합니다.
+    file_source는 파일 경로(str) 또는 메모리 내 파일(BytesIO)일 수 있습니다.
     """
     db: Session = SessionLocal() # SQLAlchemy 세션 시작
     logger.info(f"Starting ETL process for patent '{patent_number}'...")
@@ -53,31 +56,35 @@ def run_etl(patent_number, excel_file_path):
         patent = get_or_create(db, Patent, patent_number=patent_number)
         logger.info(f"Using patent_id: {patent.patent_id} for patent_number: '{patent.patent_number}'.")
 
+        if isinstance(file_source, str):
+            excel_file_name_for_mapping = os.path.basename(file_source)
+        else:
+            excel_file_name_for_mapping = "1020170094694_extracted_250611.xlsx"
+
         # 2. 파일 이름에 맞는 파서를 선택하고 실행합니다.
         parser_mapping = {
             "1020170094694_extracted_250611.xlsx": parsers.parse_file_1,
-            # ...
+            "file2.xlsx": parsers.parse_file_2,
+            "file3.xlsx": parsers.parse_file_3,
+            "file4.xlsx": parsers.parse_file_4,
         }
-        excel_file_name = os.path.basename(excel_file_path)
-        parser_func = parser_mapping.get(excel_file_name)
+        parser_func = parser_mapping.get(excel_file_name_for_mapping)
+
         if not parser_func:
-            logger.warning(f"No parser defined for file: {excel_file_name}. Skipping.")
-            return
-        processed_dataframes = parser_func(excel_file_path)
+            message = f"'{excel_file_name_for_mapping}'에 대한 파서가 정의되지 않았습니다."
+            logger.warning(message)
+            return False, message
+
+        processed_dataframes = parser_func(file_source)
 
         # 3. 변환된 데이터를 DB에 저장합니다.
-        for target_name, df in processed_dataframes.items():
+        total_targets = len(processed_dataframes)
+        for i, (target_name, df) in enumerate(processed_dataframes.items()):
             logger.info(f"  Loading data for target: '{target_name}'")
             try:
-                # target_id 가져오기
                 target = get_or_create(db, Target, target_name=target_name)
-
-                # 각 행의 데이터를 DB에 삽입
                 for index, row in df.iterrows():
-                    # compound_id 가져오기
                     compound = get_or_create(db, Compound, smiles=row['SMILES'])
-                    
-                    # activities 테이블에 최종 데이터 삽입
                     new_activity = Activity(
                         compound_id=compound.compound_id,
                         target_id=target.target_id,
@@ -87,19 +94,21 @@ def run_etl(patent_number, excel_file_path):
                         activity_category=row['Activity']
                     )
                     db.add(new_activity)
-                
-                db.commit() # 이 타겟에 대한 모든 변경사항을 커밋
+                db.commit()
                 logger.info(f"  Successfully loaded data for target: '{target_name}'")
-
+                if progress_bar:
+                    progress_bar.progress((i + 1) / total_targets, text=f"타겟 처리 중: {target_name}")
             except Exception as e:
+                db.rollback()
                 logger.error(f"  Error processing target '{target_name}': {e}", exc_info=True)
-                db.rollback() # 오류 발생 시 롤백
-                logger.warning(f"  Rolled back transaction for target '{target_name}'.")
-        
+
+        return True, f"Successfully processed {len(processed_dataframes)} targets for patent {patent_number}."
     except Exception as e:
+        db.rollback()
         logger.error(f"An unexpected error occurred during ETL process: {e}", exc_info=True)
+        return False, str(e)
     finally:
-        db.close() # 세션 종료
+        db.close()
         logger.info(f"ETL process for patent '{patent_number}' finished.")
 
 if __name__ == '__main__':
@@ -113,4 +122,6 @@ if __name__ == '__main__':
     if not os.path.exists(excel_file_full_path):
         logger.error(f"Error: Excel file not found at {excel_file_full_path}.")
     else:
-        run_etl(args.patent_number, excel_file_full_path)
+        success, message = run_etl(args.patent_number, excel_file_full_path)
+        if not success:
+            logger.error(f"ETL process failed: {message}")

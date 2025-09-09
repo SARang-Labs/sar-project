@@ -1,14 +1,19 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Date
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
 import datetime
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Float, DateTime, 
+    ForeignKey, Text, Date
+)
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 
-# --- 설정 ---
-DATABASE_PATH = "/Users/lionkim/Desktop/debate_app/sar-project/patent_etl_pipeline/database/patent_data.db"
+# --- 설정: 이 파일의 위치를 기준으로 DB 경로를 설정하여 일관성 유지 ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_DIR = os.path.join(SCRIPT_DIR, "database")
+DATABASE_NAME = "patent_data.db"
+DATABASE_PATH = os.path.join(DATABASE_DIR, DATABASE_NAME)
 
 # SQLAlchemy 엔진 생성
-# check_same_thread는 SQLite를 사용할 때 필요한 옵션입니다.
 engine = create_engine(
     f"sqlite:///{DATABASE_PATH}",
     connect_args={"check_same_thread": False}
@@ -21,8 +26,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-# --- 테이블 모델 정의 (파이썬 클래스) ---
-
+# --- 테이블 모델 정의 (데이터베이스 스키마) ---
 class Patent(Base):
     __tablename__ = "patents"
     patent_id = Column(Integer, primary_key=True, index=True)
@@ -70,10 +74,12 @@ class AI_Hypothesis(Base):
     context_info = Column(Text) # JSON string
     hypothesis_timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
-def get_db():
-    """데이터베이스 세션을 생성하고 반환하는 함수"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# --- DB 생성 함수 ---
+def init_db():
+    """
+    database.py에 정의된 모든 테이블을 데이터베이스에 생성합니다.
+    """
+    print("데이터베이스 스키마를 확인하고 생성합니다...")
+    os.makedirs(DATABASE_DIR, exist_ok=True)
+    Base.metadata.create_all(bind=engine)
+    print("✅ 데이터베이스 스키마 준비 완료.")

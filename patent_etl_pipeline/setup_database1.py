@@ -1,22 +1,26 @@
+
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Date
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Float, DateTime, 
+    ForeignKey, Text, Date, MetaData, text
+)
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
 import datetime
 
 # --- 설정 ---
-DATABASE_PATH = "database/patent_data.db"
-
+# 이 파일(setup_database.py)의 위치를 기준으로 경로를 설정합니다.
+# 이 스크립트가 patent_etl_pipeline 폴더 안에 있다고 가정합니다.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_DIR = os.path.join(SCRIPT_DIR, "database")
+DATABASE_NAME = "patent_data.db"
+DATABASE_PATH = os.path.join(DATABASE_DIR, DATABASE_NAME)
 
 # SQLAlchemy 엔진 생성
-# check_same_thread는 SQLite를 사용할 때 필요한 옵션입니다.
 engine = create_engine(
     f"sqlite:///{DATABASE_PATH}",
     connect_args={"check_same_thread": False}
 )
-
-# 데이터베이스 세션 생성을 위한 클래스
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # 모든 모델 클래스가 상속받을 기본 클래스
 Base = declarative_base()
@@ -54,7 +58,7 @@ class Activity(Base):
 class SAR_Analysis(Base):
     __tablename__ = "sar_analyses"
     analysis_id = Column(Integer, primary_key=True, index=True)
-    patent_id = Column(Integer, ForeignKey("patents.patent_id"))
+    patent_id = Column(Integer, ForeignKey("patents.patent_id")) # patent_id 추가
     compound_id_1 = Column(Integer, ForeignKey("compounds.compound_id"), nullable=False)
     compound_id_2 = Column(Integer, ForeignKey("compounds.compound_id"), nullable=False)
     similarity = Column(Float)
@@ -71,10 +75,31 @@ class AI_Hypothesis(Base):
     context_info = Column(Text) # JSON string
     hypothesis_timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
-def get_db():
-    """데이터베이스 세션을 생성하고 반환하는 함수"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def update_db_schema():
+    """
+    database.py에 정의된 모델을 바탕으로 데이터베이스 스키마를 생성하거나 업데이트합니다.
+    """
+    print("SQLAlchemy를 사용하여 데이터베이스 스키마를 확인 및 업데이트합니다...")
+    os.makedirs(DATABASE_DIR, exist_ok=True)
+    
+    Base.metadata.create_all(bind=engine)
+    
+    with engine.connect() as connection:
+        # PRAGMA 쿼리 실행
+        result = connection.execute(text("PRAGMA table_info(sar_analyses);"))
+        
+        columns = [row[1] for row in result]
+        if 'patent_id' not in columns:
+            print("  'sar_analyses' 테이블에 'patent_id' 컬럼을 추가합니다...")
+
+            connection.execute(text('ALTER TABLE sar_analyses ADD COLUMN patent_id INTEGER REFERENCES patents(patent_id)'))
+            connection.commit()
+
+            print("  ✅ 컬럼 추가 완료.")
+        else:
+            print("  'sar_analyses' 테이블에 'patent_id' 컬럼이 이미 존재합니다.")
+            
+    print("\n✅ 모든 테이블이 성공적으로 생성 또는 확인되었습니다.")
+
+if __name__ == "__main__":
+    update_db_schema()

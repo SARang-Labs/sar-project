@@ -15,100 +15,82 @@ import json
 import os
 from urllib.parse import quote
 import itertools
-import sqlite3
-import json
+from patent_etl_pipeline.database import SessionLocal, Patent, SAR_Analysis, AI_Hypothesis
 
 # --- 결과 저장 함수 ---
-def save_results_to_db(db_path, cliff_data, hypothesis_text, llm_provider, context_info=None):
+def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider, context_info=None):
     """
-    분석 결과(cliff)와 AI 가설을 데이터베이스에 저장합니다.
+    [SQLAlchemy] 분석 결과(cliff)와 AI 가설을 데이터베이스에 저장합니다.
     """
-    conn = None
+    db = SessionLocal()
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+        # patent_number를 이용해 patent_id를 찾습니다.
+        patent = db.query(Patent).filter(Patent.patent_number == patent_number).first()
+        if not patent:
+            print(f"오류: DB에서 특허 '{patent_number}'를 찾을 수 없습니다.")
+            return None
 
         # 1. sar_analyses 테이블에 분석 결과 저장
-        analysis_sql = """
-        INSERT INTO sar_analyses (compound_id_1, compound_id_2, similarity, activity_difference, score)
-        VALUES (?, ?, ?, ?, ?);
-        """
-        analysis_data = (
-            cliff_data['mol_1'].get('ID'),
-            cliff_data['mol_2'].get('ID'),
-            cliff_data.get('similarity'),
-            cliff_data.get('activity_diff'),
-            cliff_data.get('score')
+        new_analysis = SAR_Analysis(
+            patent_id=patent.patent_id,
+            compound_id_1=cliff_data['mol_1'].get('ID'),
+            compound_id_2=cliff_data['mol_2'].get('ID'),
+            similarity=cliff_data.get('similarity'),
+            activity_difference=cliff_data.get('activity_diff'),
+            score=cliff_data.get('score')
         )
-        cursor.execute(analysis_sql, analysis_data)
-        
-        # 방금 저장된 analysis_id 가져오기
-        last_analysis_id = cursor.lastrowid
-        print(f"분석 결과 저장 완료 (Analysis ID: {last_analysis_id})")
+        db.add(new_analysis)
+        db.flush() # DB에 임시 반영하여 analysis_id를 얻음
 
         # 2. ai_hypotheses 테이블에 가설 저장
         if hypothesis_text:
-            hypothesis_sql = """
-            INSERT INTO ai_hypotheses (analysis_id, agent_name, hypothesis_text, context_info)
-            VALUES (?, ?, ?, ?);
-            """
-            # context_info 딕셔너리를 JSON 형태의 텍스트로 변환
-            context_text = json.dumps(context_info) if context_info else None
-            
-            hypothesis_data = (
-                last_analysis_id,
-                llm_provider,
-                hypothesis_text,
-                context_text
+            context_text = json.dumps(context_info, ensure_ascii=False) if context_info else None
+            new_hypothesis = AI_Hypothesis(
+                analysis_id=new_analysis.analysis_id,
+                agent_name=llm_provider,
+                hypothesis_text=hypothesis_text,
+                context_info=context_text
             )
-            cursor.execute(hypothesis_sql, hypothesis_data)
-            print(f"AI 가설 저장 완료 (Hypothesis for Analysis ID: {last_analysis_id})")
+            db.add(new_hypothesis)
 
-        conn.commit()
-        return last_analysis_id # 성공 시 저장된 ID 반환
-
+        db.commit() # 모든 변경사항을 DB에 최종 저장
+        return new_analysis.analysis_id
     except Exception as e:
         print(f"DB 저장 중 오류 발생: {e}")
-        if conn:
-            conn.rollback() # 오류 발생 시 트랜잭션 롤백
+        db.rollback()
         return None
     finally:
-        if conn:
-            conn.close()
+        db.close()
 
 # --- 데이터 조회 함수 ---
-def get_analysis_history(db_path):
+def get_analysis_history():
     """
-    Fetches the entire SAR analysis and AI hypothesis history from the database.
+    [SQLAlchemy] SAR 분석 및 AI 가설 전체 이력을 데이터베이스에서 가져옵니다.
     """
-    conn = None
+    db = SessionLocal()
     try:
-        conn = sqlite3.connect(db_path)
-        # Use a LEFT JOIN to include analyses that may not have a hypothesis yet
-        query = """
-        SELECT
-            sa.analysis_id,
-            sa.analysis_timestamp,
-            sa.compound_id_1,
-            sa.compound_id_2,
-            sa.similarity,
-            sa.activity_difference,
-            sa.score,
-            ah.hypothesis_text,
-            ah.agent_name,
-            ah.context_info
-        FROM sar_analyses sa
-        LEFT JOIN ai_hypotheses ah ON sa.analysis_id = ah.analysis_id
-        ORDER BY sa.analysis_timestamp DESC;
-        """
-        df = pd.read_sql_query(query, conn)
+        # SQLAlchemy ORM을 사용하여 JOIN 쿼리 작성
+        query = db.query(
+                    Patent.patent_number,
+                    SAR_Analysis.analysis_id,
+                    SAR_Analysis.analysis_timestamp,
+                    SAR_Analysis.compound_id_1,
+                    SAR_Analysis.compound_id_2,
+                    SAR_Analysis.similarity,
+                    SAR_Analysis.activity_difference,
+                    SAR_Analysis.score,
+                    AI_Hypothesis.hypothesis_text
+                ).join(SAR_Analysis, Patent.patent_id == SAR_Analysis.patent_id)\
+                 .outerjoin(AI_Hypothesis, SAR_Analysis.analysis_id == AI_Hypothesis.analysis_id)\
+                 .order_by(Patent.patent_number, SAR_Analysis.analysis_timestamp.desc()).statement
+        
+        df = pd.read_sql_query(query, db.bind)
         return df
     except Exception as e:
         st.error(f"분석 이력 로딩 중 오류 발생: {e}")
-        return pd.DataFrame() # Return an empty DataFrame on error
+        return pd.DataFrame()
     finally:
-        if conn:
-            conn.close()
+        db.close()
 
 
 # --- Helper Functions ---
@@ -156,7 +138,7 @@ def get_structural_difference_keyword(smiles1, smiles2):
     except Exception:
         pass
     
-    # 간단한 작용기 이름으로 변환 (예시)
+    # 간단한 작용기 이름으로 변환
     if fragments:
         # 가장 흔한 작용기 이름 몇 개만 간단히 매핑
         common_names = {
@@ -350,19 +332,19 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
                     mol1_info['canonical_smiles'] = canonicalize_smiles(mol1_info['SMILES'])
                     mol2_info['canonical_smiles'] = canonicalize_smiles(mol2_info['SMILES'])
                     
-                    # 구조적 차이 키워드 추가 (안전한 처리)
+                    # 구조적 차이 키워드 추가
                     try:
                         structural_diff = get_structural_difference_keyword(mol1_info['SMILES'], mol2_info['SMILES'])
                     except:
                         structural_diff = "구조적 차이 분석 불가"
                     
-                    # 입체이성질체 여부 확인 (안전한 처리)
+                    # 입체이성질체 여부 확인
                     try:
                         is_stereoisomer = check_stereoisomers(mol1_info['SMILES'], mol2_info['SMILES'])
                     except:
                         is_stereoisomer = False
                     
-                    # 분자 특성 계산 (안전한 처리)
+                    # 분자 특성 계산
                     mol1_props = calculate_molecular_properties(df['mol'].iloc[i])
                     mol2_props = calculate_molecular_properties(df['mol'].iloc[j])
                     

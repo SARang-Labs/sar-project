@@ -46,7 +46,7 @@ st.set_page_config(page_title="AI 기반 SAR 분석 시스템", page_icon="🧪"
 
 
 # --- 공통 로직 처리 헬퍼 함수 ---
-def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider):
+def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider, selected_patent):
     mol1 = pd.Series(cliff_data['mol_1'])
     mol2 = pd.Series(cliff_data['mol_2'])
     similarity = cliff_data['similarity']
@@ -131,7 +131,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                     report_text = json.dumps(final_report, indent=2, ensure_ascii=False)
                     
                     saved_id = save_results_to_db(
-                        db_path=db_path,
+                        patent_number=selected_patent,
                         cliff_data=cliff_data,
                         hypothesis_text=report_text, # 최종 리포트를 저장
                         llm_provider="Expert Discussion System", # 에이전트 이름 변경
@@ -146,7 +146,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
 
 # --- UI 렌더링 함수  ---
 
-def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider):
+def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
     if 'Activity' not in df.columns:
         st.error("오류: 정량 분석을 실행하려면 데이터에 'Activity' 컬럼이 필요합니다.")
@@ -217,10 +217,10 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                 process_and_display_pair(
                     idx=selected_idx, cliff_data=cliff_data_quant, sim_thresh=sim_thresh, 
                     activity_col=ref_activity_col, tab_key=f"quantitative_{tab_key}",
-                    target_name=target_name, api_key=api_key, llm_provider=llm_provider
+                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent
                 )
 
-def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider):
+def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
     st.info("구조가 유사하지만 **선택된 활성 값의 차이가 큰** 쌍(Activity Cliff)을 탐색합니다.")
     if not available_activity_cols:
         st.error("오류: 분석 가능한 활성 컬럼(pKi/pIC50)이 없습니다.")
@@ -262,11 +262,11 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 x='similarity',
                 y='activity_diff', 
                 title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
-                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_diff': f'활성도 차이 (Δ{analyzed_col})'}, # <<< 여기도 수정
+                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_diff': f'활성도 차이 (Δ{analyzed_col})'}, 
                 hover_data=['pair_label', 'score'],
                 color='score',
                 color_continuous_scale=px.colors.sequential.Viridis,
-                size='activity_diff' # <<< 여기도 수정
+                size='activity_diff' 
             )
             fig_scatter.add_shape(
                 type="rect", xref="x", yref="y",
@@ -293,12 +293,12 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 process_and_display_pair(
                     idx=selected_idx, cliff_data=cliff, sim_thresh=sim_thresh, 
                     activity_col=analyzed_col, tab_key=tab_key,
-                    target_name=target_name, api_key=api_key, llm_provider=llm_provider
+                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent
                 )
 
 
 # --- DB 연동을 위한 데이터 로딩 함수 ---
-db_path = "/Users/lionkim/Desktop/debate_app/sar-project/patent_etl_pipeline/database/patent_data.db" 
+db_path = "patent_etl_pipeline/database/patent_data.db" 
 
 @st.cache_data
 def get_patent_list():
@@ -462,7 +462,7 @@ def main():
                     if analysis_type_adv == "정량 분석":
                         render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
                     else:
-                        render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
+                        render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
 
             if tab_basic:
                 with tab_basic:
@@ -472,7 +472,7 @@ def main():
                     if analysis_type_basic == "정량 분석":
                         render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
                     else:
-                        render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
+                        render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
         else:
             st.info("분석을 시작하려면 사이드바에서 특허와 타겟을 모두 선택하세요.")
 
@@ -481,7 +481,7 @@ def main():
         st.header("분석 이력 조회")
 
         with st.spinner("과거 분석 이력을 불러오는 중..."):
-            history_df = get_analysis_history(db_path)
+            history_df = get_analysis_history()
 
         if history_df.empty:
             st.info("저장된 분석 이력이 없습니다. '실시간 분석' 탭에서 분석을 실행하고 결과를 저장해주세요.")

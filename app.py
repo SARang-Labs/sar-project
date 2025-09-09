@@ -6,8 +6,9 @@ import plotly.express as px
 from rdkit import Chem
 from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
-import sqlite3
 import json
+from sqlalchemy.orm import Session
+from patent_etl_pipeline.database import SessionLocal, Patent, Compound, Target, Activity, SAR_Analysis, AI_Hypothesis
 
 from utils import (
     load_data,
@@ -111,7 +112,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                             with st.expander("참고 문헌 정보 (RAG)"): st.json(context)
 
         elif tab_key.endswith('advanced'):
-        # --- [수정된 부분 시작] ---
+
          if st.button("온라인 토론 시작 및 결과 저장", key=f"disc_{idx}_{tab_key}"):
             if not api_key: 
                 st.warning("사이드바에서 API 키를 입력해주세요.")
@@ -300,83 +301,78 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
 db_path = "/Users/lionkim/Desktop/debate_app/sar-project/patent_etl_pipeline/database/patent_data.db" 
 
 @st.cache_data
-def get_patent_list(database_path):
+def get_patent_list():
     """DB에서 전체 특허 번호 목록만 빠르게 가져옵니다."""
-    if not os.path.exists(database_path): return []
+    db: Session = SessionLocal()
     try:
-        conn = sqlite3.connect(database_path, check_same_thread=False)
-        query = "SELECT patent_number FROM patents ORDER BY patent_number DESC;"
-        df = pd.read_sql_query(query, conn)
-        return df['patent_number'].tolist()
+        patents = db.query(Patent.patent_number).order_by(Patent.patent_number.desc()).all()
+        return [p[0] for p in patents] # 튜플 리스트를 일반 리스트로 변환
     except Exception as e:
         st.sidebar.error(f"DB 특허 목록 로딩 중 오류: {e}")
         return []
     finally:
-        if 'conn' in locals() and conn: conn.close()
+        db.close()
 
 @st.cache_data
-def get_targets_for_patent(database_path, patent_number):
+def get_targets_for_patent(patent_number):
     """입력된 특허 번호에 해당하는 모든 타겟의 이름을 DB에서 찾아 반환합니다."""
-    if not os.path.exists(database_path) or not patent_number: return []
+    if not patent_number: return []
+    db: Session = SessionLocal()
     try:
-        conn = sqlite3.connect(database_path, check_same_thread=False)
-        query = """
-        SELECT DISTINCT t.target_name
-        FROM targets t
-        JOIN activities a ON t.target_id = a.target_id
-        JOIN patents p ON a.patent_id = p.patent_id
-        WHERE p.patent_number = ?
-        ORDER BY t.target_name;
-        """
-        df = pd.read_sql_query(query, conn, params=(patent_number,))
-        return df['target_name'].tolist()
+        targets = db.query(Target.target_name)\
+                    .join(Activity, Target.target_id == Activity.target_id)\
+                    .join(Patent, Activity.patent_id == Patent.patent_id)\
+                    .filter(Patent.patent_number == patent_number)\
+                    .distinct().order_by(Target.target_name).all()
+        return [t[0] for t in targets]
     except Exception as e:
         st.sidebar.error(f"특허 '{patent_number}'의 타겟 목록 로딩 중 오류: {e}")
         return []
     finally:
-        if 'conn' in locals() and conn: conn.close()
+        db.close()
 
 @st.cache_data
-def get_data_for_patent_and_target(database_path, patent_number, target_name):
+def get_data_for_patent_and_target(patent_number, target_name):
     """특정 특허와 특정 타겟에 대한 데이터만 DB에서 JOIN하여 가져옵니다."""
-    if not all([os.path.exists(database_path), patent_number, target_name]): return None
+    if not all([patent_number, target_name]): return None
+    db: Session = SessionLocal()
     try:
-        conn = sqlite3.connect(database_path, check_same_thread=False)
-        query = """
-        SELECT
-            c.smiles AS "SMILES", c.compound_id AS "ID",
-            t.target_name AS "Target", p.patent_number AS "Patent",
-            a.ic50 AS "IC50", a.pic50 AS "pIC50", a.activity_category AS "Activity"
-        FROM activities a
-        JOIN compounds c ON a.compound_id = c.compound_id
-        JOIN targets t ON a.target_id = t.target_id
-        JOIN patents p ON a.patent_id = p.patent_id
-        WHERE p.patent_number = ? AND t.target_name = ?;
-        """
-        df = pd.read_sql_query(query, conn, params=(patent_number, target_name))
+        # SQLAlchemy의 read_sql_query를 사용하여 DataFrame으로 직접 변환
+        query = db.query(
+                    Compound.smiles.label("SMILES"),
+                    Compound.compound_id.label("ID"),
+                    Target.target_name.label("Target"),
+                    Patent.patent_number.label("Patent"),
+                    Activity.ic50.label("IC50"),
+                    Activity.pic50.label("pIC50"),
+                    Activity.activity_category.label("Activity")
+                ).join(Activity, Compound.compound_id == Activity.compound_id)\
+                 .join(Target, Activity.target_id == Target.target_id)\
+                 .join(Patent, Activity.patent_id == Patent.patent_id)\
+                 .filter(Patent.patent_number == patent_number, Target.target_name == target_name).statement
+        df = pd.read_sql_query(query, db.bind)
         return df
     except Exception as e:
         st.error(f"데이터 로딩 중 오류: {e}")
         return None
     finally:
-        if 'conn' in locals() and conn: conn.close()
+        db.close()
 
 # --- Main App ---
 def main():
     with st.sidebar:
         st.title("AI SAR 분석 시스템")
-        st.info("AI 기반 구조-활성 관계(SAR) 분석 및 예측 솔루션입니다.")
-        
+        st.info("AI 기반 구조-활성 관계(SAR) 분석 및 예측 솔루션입니다.")    
         st.header("📁 데이터 선택")
         
         # 1. 특허 번호 입력 (DB에 있는 목록에서 선택하거나 직접 입력)
-        patent_list = get_patent_list(db_path)
+        patent_list = get_patent_list()
         selected_patent = st.selectbox("1. 분석할 특허 번호를 선택하세요:", options=[""] + patent_list)
         
         # 2. 선택된 특허에 포함된 타겟 목록 표시
         selected_target = None
         if selected_patent:
-            target_list = get_targets_for_patent(db_path, selected_patent)
+            target_list = get_targets_for_patent(selected_patent)
             if target_list:
                 selected_target = st.selectbox("2. 분석할 타겟을 선택하세요:", options=[""] + target_list)
             else:
@@ -397,7 +393,6 @@ def main():
 
     created_tabs = st.tabs(tab_titles)
     tab_map = {name: tab for name, tab in zip(tab_titles, created_tabs)}
-    # --- [수정된 부분 끝] ---
 
     # --- 탭 1: 실시간 분석 ---
     with tab_map["실시간 분석"]:
@@ -408,7 +403,7 @@ def main():
         if selected_patent and selected_target:
             with st.spinner(f"특허 '{selected_patent}'의 '{selected_target}' 데이터 로딩 중..."):
                 # 1. 특허와 타겟에 맞는 데이터를 DB에서 가져옵니다.
-                df_from_db = get_data_for_patent_and_target(db_path, selected_patent, selected_target)
+                df_from_db = get_data_for_patent_and_target(selected_patent, selected_target)
 
             if df_from_db is not None:
                 # 2. 가져온 데이터를 utils.py의 load_data 함수로 후처리합니다.

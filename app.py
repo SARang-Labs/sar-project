@@ -13,6 +13,7 @@ from patent_etl_pipeline.database import SessionLocal, Patent, Compound, Target,
 from utils import (
     load_data,
     find_activity_cliffs,
+    find_quantitative_pairs,
     generate_hypothesis_cliff,
     generate_hypothesis_quantitative,
     draw_highlighted_pair,
@@ -148,44 +149,27 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
 
 def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
-    if 'Activity' not in df.columns:
-        st.error("오류: 정량 분석을 실행하려면 데이터에 'Activity' 컬럼이 필요합니다.")
-        return
-    if not available_activity_cols:
-        st.error("오류: 분석에 사용할 유효한 활성 컬럼(pKi/pIC50)이 데이터에 없습니다.")
+    if 'Activity' not in df.columns or not available_activity_cols:
+        st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pKi/pIC50)이 없습니다.")
         return
     ref_activity_col = available_activity_cols[0]
 
     sim_thresh = st.slider("유사도 임계값", 0.5, 1.0, 0.8, 0.01, key=f'sim_quant_{tab_key}')
+    
     if st.button("정량 분석 실행", key=f'run_quant_{tab_key}'):
         with st.spinner("정량 분석 중..."):
-            df_quant = df.dropna(subset=['SMILES', 'Activity', ref_activity_col]).copy()
-            df_quant['mol'] = df_quant['SMILES'].apply(Chem.MolFromSmiles)
-            df_quant.dropna(subset=['mol'], inplace=True)
-            df_quant['scaffold'] = df_quant['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)) if m else None)
-            fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
-            df_quant['fp'] = [fpgenerator.GetFingerprint(m) for m in df_quant['mol']]
-            df_quant.reset_index(inplace=True, drop=True)
-            pairs = []
-            for i in range(len(df_quant)):
-                for j in range(i + 1, len(df_quant)):
-                    sim = DataStructs.TanimotoSimilarity(df_quant.iloc[i]['fp'], df_quant.iloc[j]['fp'])
-                    if sim >= sim_thresh and df_quant.iloc[i]['Activity'] != df_quant.iloc[j]['Activity']:
-                        pairs.append({'mol1_index': i, 'mol2_index': j, 'similarity': sim})
-            activity_map = {'Highly Active': 4, 'Moderately Active': 3, 'Weakly Active': 2, 'Inactive': 1}
-            for pair in pairs:
-                activity1 = df_quant.iloc[pair['mol1_index']]['Activity']
-                activity2 = df_quant.iloc[pair['mol2_index']]['Activity']
-                score1 = activity_map.get(activity1, 0)
-                score2 = activity_map.get(activity2, 0)
-                pair['activity_category_diff'] = abs(score1 - score2)
-            pairs.sort(key=lambda x: x.get('activity_category_diff', 0), reverse=True)
+            # --- [수정된 부분] ---
+            # 복잡한 분석 로직 대신 utils.py의 함수를 한 줄로 호출합니다.
+            pairs, df_quant_processed = find_quantitative_pairs(df, sim_thresh, ref_activity_col)
+            # --- [수정된 부분 끝] ---
+            
             st.session_state[f'quant_pairs_{tab_key}'] = pairs
-            st.session_state[f'quant_data_{tab_key}'] = df_quant
+            st.session_state[f'quant_data_{tab_key}'] = df_quant_processed
 
     if f'quant_pairs_{tab_key}' in st.session_state:
         pairs = st.session_state[f'quant_pairs_{tab_key}']
         df_quant_valid = st.session_state[f'quant_data_{tab_key}']
+        
         st.success(f"총 {len(pairs)}개의 유의미한 화합물 쌍을 찾았습니다.")
         if not pairs:
             st.warning("현재 조건에 맞는 화합물 쌍을 찾지 못했습니다. 임계값을 조절해보세요.")
@@ -460,7 +444,7 @@ def main():
                     analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
                     st.markdown("---")
                     if analysis_type_adv == "정량 분석":
-                        render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider)
+                        render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
                     else:
                         render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
 
@@ -470,7 +454,7 @@ def main():
                     analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
                     st.markdown("---")
                     if analysis_type_basic == "정량 분석":
-                        render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider)
+                        render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
                     else:
                         render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
         else:

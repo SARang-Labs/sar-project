@@ -4,7 +4,7 @@ import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS, rdDepictor
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import rdFingerprintGenerator
+from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
 from openai import OpenAI
@@ -79,7 +79,8 @@ def get_analysis_history():
                     SAR_Analysis.similarity,
                     SAR_Analysis.activity_difference,
                     SAR_Analysis.score,
-                    AI_Hypothesis.hypothesis_text
+                    AI_Hypothesis.hypothesis_text,
+                    AI_Hypothesis.agent_name.label("agent_name")
                 ).join(SAR_Analysis, Patent.patent_id == SAR_Analysis.patent_id)\
                  .outerjoin(AI_Hypothesis, SAR_Analysis.analysis_id == AI_Hypothesis.analysis_id)\
                  .order_by(Patent.patent_number, SAR_Analysis.analysis_timestamp.desc()).statement
@@ -367,6 +368,41 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
     
     cliffs.sort(key=lambda x: x['score'], reverse=True)
     return cliffs
+
+def find_quantitative_pairs(df, similarity_threshold, activity_col):
+    """
+    구조적으로 유사하지만 활성 분류(Activity)가 다른 화합물 쌍을 찾습니다.
+    """
+    df_quant = df.dropna(subset=['SMILES', 'Activity', activity_col]).copy()
+    
+    # RDKit 객체 및 지문 생성
+    df_quant['mol'] = df_quant['SMILES'].apply(Chem.MolFromSmiles)
+    df_quant.dropna(subset=['mol'], inplace=True)
+    fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    df_quant['fp'] = [fpgenerator.GetFingerprint(m) for m in df_quant['mol']]
+    df_quant.reset_index(inplace=True, drop=True)
+
+    pairs = []
+    # 모든 쌍을 비교하여 조건에 맞는 쌍을 찾습니다.
+    for i in range(len(df_quant)):
+        for j in range(i + 1, len(df_quant)):
+            sim = DataStructs.TanimotoSimilarity(df_quant.iloc[i]['fp'], df_quant.iloc[j]['fp'])
+            if sim >= similarity_threshold and df_quant.iloc[i]['Activity'] != df_quant.iloc[j]['Activity']:
+                pairs.append({'mol1_index': i, 'mol2_index': j, 'similarity': sim})
+
+    # 활성 분류 차이 점수 계산 및 정렬
+    activity_map = {'Highly Active': 4, 'Moderately Active': 3, 'Weakly Active': 2, 'Inactive': 1}
+    for pair in pairs:
+        activity1 = df_quant.iloc[pair['mol1_index']]['Activity']
+        activity2 = df_quant.iloc[pair['mol2_index']]['Activity']
+        score1 = activity_map.get(activity1, 0)
+        score2 = activity_map.get(activity2, 0)
+        pair['activity_category_diff'] = abs(score1 - score2)
+    
+    pairs.sort(key=lambda x: x.get('activity_category_diff', 0), reverse=True)
+    
+    # 나중에 UI에서 원본 데이터를 참조할 수 있도록 처리된 데이터프레임도 함께 반환
+    return pairs, df_quant
 
 # --- Phase 3: LLM 기반 해석 및 가설 생성 (RAG 적용) ---
 

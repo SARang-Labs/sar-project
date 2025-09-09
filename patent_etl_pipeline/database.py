@@ -5,8 +5,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 import datetime
 
 # --- 설정 ---
-DATABASE_PATH = "database/patent_data.db"
-
+DATABASE_PATH = "/Users/lionkim/Desktop/debate_app/sar-project/patent_etl_pipeline/database/patent_data.db"
 
 # SQLAlchemy 엔진 생성
 # check_same_thread는 SQLite를 사용할 때 필요한 옵션입니다.

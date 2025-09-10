@@ -195,6 +195,42 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
         if not pairs:
             st.warning("현재 조건에 맞는 화합물 쌍을 찾지 못했습니다. 임계값을 조절해보세요.")
         else:
+            # Activity Cliff 분포 시각화 추가
+            quantitative_plot_data = []
+            for p in pairs:
+                mol1 = df_quant_valid.iloc[p['mol1_index']]
+                mol2 = df_quant_valid.iloc[p['mol2_index']]
+                quantitative_plot_data.append({
+                    'similarity': p['similarity'],
+                    'activity_diff': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
+                    'pair_label': f"{mol1.get('ID', 'N/A')} vs {mol2.get('ID', 'N/A')}",
+                    'score': p.get('activity_category_diff', 0)
+                })
+            
+            if quantitative_plot_data:
+                plot_df_quant = pd.DataFrame(quantitative_plot_data)
+                st.markdown("#### Activity Cliff 분포 시각화")
+                fig_quant_scatter = px.scatter(
+                    plot_df_quant,
+                    x='similarity',
+                    y='activity_diff', 
+                    title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
+                    labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_diff': f'활성도 차이 (Δ{ref_activity_col})'}, 
+                    hover_data=['pair_label', 'score'],
+                    color='score',
+                    color_continuous_scale=px.colors.sequential.Viridis,
+                    size='activity_diff' 
+                )
+                fig_quant_scatter.add_shape(
+                    type="rect", xref="x", yref="y",
+                    x0=sim_thresh, y0=0, x1=1.0, 
+                    y1=plot_df_quant['activity_diff'].max() * 1.1,
+                    line=dict(color="Red", width=2, dash="dash"),
+                    fillcolor="rgba(255,0,0,0.1)"
+                )
+                st.plotly_chart(fig_quant_scatter, use_container_width=True)
+                st.markdown("---")
+            
             st.markdown("#### 상세 분석 목록")
             pair_options = [
                 f"{idx+1}. {df_quant_valid.iloc[p['mol1_index']].get('ID', 'N/A')} vs {df_quant_valid.iloc[p['mol2_index']].get('ID', 'N/A')} "
@@ -429,10 +465,6 @@ def main():
 
     # --- 탭 구조 정의 ---
     tab_titles = ["실시간 분석", "분석 이력 조회"]
-    
-    # 외부 시스템 가용성에 따라 동적으로 탭 추가 (기존 로직 활용)
-    # if ONLINE_DISCUSSION_AVAILABLE: tab_titles.insert(1, "SAR 분석 (다각도 분석 시스템 적용)") # 다각도 분석 시스템을 별도 탭으로 분리할 경우
-    if PROMPT_SYSTEM_AVAILABLE: tab_titles.append("최적 프롬프트 분석")
 
     created_tabs = st.tabs(tab_titles)
     tab_map = {name: tab for name, tab in zip(tab_titles, created_tabs)}
@@ -483,39 +515,20 @@ def main():
         if df is not None:
             st.success(f"'{selected_target}'에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
 
-            # '실시간 분석' 탭 내부에 세부 분석 탭들을 생성합니다.
-            tabs_to_create_inner = []
-            if ONLINE_DISCUSSION_AVAILABLE: tabs_to_create_inner.append("SAR 분석")
-            tabs_to_create_inner.append("SAR 분석 (기본)")
-
-            created_tabs_inner = st.tabs(tabs_to_create_inner)
-            tab_map_inner = {name: tab for name, tab in zip(tabs_to_create_inner, created_tabs_inner)}
-
-            tab_advanced = tab_map_inner.get("SAR 분석")
-            tab_basic = tab_map_inner.get("SAR 분석 (기본)")
-
             # 분석 함수에 전달할 타겟 이름은 사이드바에서 선택된 값을 사용합니다.
             target_name_to_use = selected_target
 
-            if tab_advanced:
-                with tab_advanced:
-                    st.subheader("구조-활성 관계 분석")
-                    analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
-                    st.markdown("---")
-                    if analysis_type_adv == "정량 분석":
-                        render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
-                    else:
-                        render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
-
-            if tab_basic:
-                with tab_basic:
-                    st.subheader("구조-활성 관계 분석 (기본)")
-                    analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
-                    st.markdown("---")
-                    if analysis_type_basic == "정량 분석":
-                        render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
-                    else:
-                        render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
+            # SAR 분석 UI (온라인 토론 시스템 사용 가능한 경우만 표시)
+            if ONLINE_DISCUSSION_AVAILABLE:
+                st.subheader("구조-활성 관계 분석")
+                analysis_type = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="analysis_type")
+                st.markdown("---")
+                if analysis_type == "정량 분석":
+                    render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
+                else:
+                    render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
+            else:
+                st.error("온라인 다각도 분석 시스템을 로드할 수 없습니다.")
         else:
             st.info("분석을 시작하려면 사이드바에서 특허와 타겟을 모두 선택하세요.")
 
@@ -544,7 +557,15 @@ def main():
                 except ValueError:
                     st.warning("ID는 숫자로 입력해주세요.")
 
-            st.dataframe(display_df)
+            # 테이블 표시 전에 시간을 한국 시간으로 변환
+            if not display_df.empty and 'analysis_timestamp' in display_df.columns:
+                from datetime import timedelta
+                display_df_copy = display_df.copy()
+                display_df_copy['analysis_timestamp'] = display_df_copy['analysis_timestamp'] + timedelta(hours=9)
+                display_df_copy['analysis_timestamp'] = display_df_copy['analysis_timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                st.dataframe(display_df_copy)
+            else:
+                st.dataframe(display_df)
 
             st.markdown("---")
             st.subheader("상세 정보 보기")
@@ -559,9 +580,16 @@ def main():
             if selected_analysis_id:
                 detail_data = history_df[history_df['analysis_id'] == selected_analysis_id].iloc[0]
                 
+                # UTC 시간을 한국 시간으로 변환
+                from datetime import timedelta
+                
+                # pandas Timestamp에 9시간 더하기
+                kst_time = detail_data['analysis_timestamp'] + timedelta(hours=9)
+                formatted_time = kst_time.strftime('%Y-%m-%d %H:%M:%S')
+                
                 st.json({
                     "분석 ID": detail_data['analysis_id'],
-                    "분석 시간": detail_data['analysis_timestamp'],
+                    "분석 시간": formatted_time,
                     "분석 쌍": f"ID {detail_data['compound_id_1']} vs ID {detail_data['compound_id_2']}",
                     "유사도": f"{detail_data['similarity']:.3f}" if pd.notna(detail_data['similarity']) else "N/A",
                     "활성 차이": f"{detail_data['activity_difference']:.3f}" if pd.notna(detail_data['activity_difference']) else "N/A",

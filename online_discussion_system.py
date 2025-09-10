@@ -52,6 +52,41 @@ class UnifiedLLMClient:
             raise ValueError(f"지원하지 않는 LLM 공급자: {self.llm_provider}")
 
 
+# ========================================
+# 할루시네이션 방지 안전 가이드라인
+# ========================================
+ANTI_HALLUCINATION_GUIDELINES = """
+**전체 전문가 Agent 공통 할루시네이션 방지 가이드라인:**
+
+1. **금지된 통계적 모델링:**
+   - 실제 계산하지 않은 회귀방정식, R², RMSE, Q², p-value 생성 금지
+   - 가짜 머신러닝 모델 성능 지표 (정확도, F1-score, ROC-AUC) 생성 금지
+   - 존재하지 않는 QSAR 모델이나 예측 모델 결과 생성 금지
+
+2. **금지된 정량적 예측:**
+   - 구체적 pKi, Ki, IC50 예측값 생성 금지 ("예측 pKi: 7.2" 등)
+   - 구체적 결합 친화도 수치 예측 금지 ("ΔG = -8.5 kcal/mol" 등)
+   - 구체적 선택성 비율 예측 금지 ("100배 향상된 선택성" 등)
+
+3. **허용된 정성적 분석:**
+   - 제공된 실제 데이터(SMILES, pKi, 물성)만을 근거로 한 해석
+   - 문헌 기반 메커니즘 추론과 화학적 논리 제시
+   - 구조적 차이와 활성 변화의 연관성 해석
+
+4. **도킹 시뮬레이션 결과 활용:**
+   - 도킹 결과가 제공된 경우, 이를 추가적인 근거로 활용
+   - 도킹 스코어와 상호작용 패턴을 구조-활성 관계 해석에 참고
+   - 실험 데이터와 도킹 결과를 종합적으로 고려
+
+5. **검증 기준:**
+   - 모든 수치는 제공된 입력 데이터에서만 인용
+   - 모든 메커니즘은 일반적 화학 지식에 근거
+   - 도킹 결과가 있으면 보조적 근거로 활용
+   - 모든 예측은 정성적 방향성만 제시 ("증가할 것으로 예상", "감소 가능성")
+
+이 가이드라인을 위반하는 내용이 감지되면 즉시 수정하고 정성적 분석으로 대체해야 함.
+"""
+
 class StructuralChemistryExpert:
     """구조화학 전문가 에이전트"""
     
@@ -69,7 +104,6 @@ class StructuralChemistryExpert:
             'agent_type': 'structural_chemistry',
             'agent_name': '구조화학 전문가',
             'hypothesis': hypothesis,
-            'confidence': self._extract_confidence_from_text(hypothesis),
             'key_insights': self._extract_key_insights(hypothesis),
             'reasoning_steps': self._extract_reasoning_steps(hypothesis),
             'timestamp': time.time()
@@ -152,7 +186,7 @@ class StructuralChemistryExpert:
         **필수 요구사항 - 전문가 수준의 분석:**
         1. 구체적 수치 데이터 포함 (LogP, MW, TPSA 등)
         2. 원자 단위 구조 차이 명시 (C-N 결합 → C-O 결합 등)
-        3. 정량적 활성 예측 ("대략 1.5 pKi 단위 감소" 등)
+        3. 정성적 활성 변화 해석 ("활성 감소 예상", "결합 친화도 향상 가능성" 등)
         4. 구체적 실험 프로토콜 ("AutoDock4로 100회 도킹" 등)
         5. 특정 분자 대상 제시 ("메틸에스터 치환체" 등)
         
@@ -165,9 +199,7 @@ class StructuralChemistryExpert:
         
         **결과 형식 (반드시 이 형식을 정확히 따르세요):**
         
-        신뢰도: [구체적 수치와 근거, 예: 85% - RDKit 계산 결과와 문헌 근거 기반]
-        
-        핵심 가설: [구체적이고 전문적인 1-2문장, 예: "N-메틸기 추가로 인한 입체장애가 Asp381과의 수소결합을 방해하여 2.3 pKi 단위 활성 감소를 초래"]
+        핵심 가설: [구체적이고 전문적인 1-2문장, 예: "N-메틸기 추가로 인한 입체장애가 Asp381과의 수소결합을 방해하여 활성 감소를 초래"]
         
         상세 분석:
         1. 구조 비교: [SMILES 구조의 정확한 차이점, 원자 번호와 결합 유형 명시]
@@ -178,47 +210,12 @@ class StructuralChemistryExpert:
         
         분자 설계 제안: [후속 화합물의 구체적 구조 변경 전략 - pKi 예측값 언급 금지]
         
+        {ANTI_HALLUCINATION_GUIDELINES}
+        - 제공된 실제 데이터(SMILES, pKi, 물성)만을 근거로 정성적 해석
+        
         **중요: 전문가가 알고 있을 뻔한 기본 내용은 피하고, 실질적이고 깊이 있는 구조생물학적 통찰을 제공하세요. 구체적 수치, 특정 분자 부위, 명확한 메커니즘을 포함하되 예상 pKi 값은 언급하지 마세요.**
         """
     
-    def _extract_confidence_from_text(self, hypothesis: str) -> float:
-        """가설 텍스트에서 실제 신뢰도 값을 추출"""
-        import re
-        
-        # "신뢰도: XX%" 패턴 찾기
-        confidence_match = re.search(r'신뢰도:.*?(\d+)%', hypothesis)
-        if confidence_match:
-            confidence_value = int(confidence_match.group(1))
-            return confidence_value / 100.0
-        
-        # 영어 패턴도 확인
-        confidence_match = re.search(r'confidence:.*?(\d+)%', hypothesis, re.IGNORECASE)
-        if confidence_match:
-            confidence_value = int(confidence_match.group(1))
-            return confidence_value / 100.0
-        
-        # 추출 실패 시 키워드 기반 계산으로 fallback
-        return self._calculate_confidence_by_keywords(hypothesis)
-    
-    def _calculate_confidence_by_keywords(self, hypothesis: str) -> float:
-        """가설의 신뢰도 계산 (단순 휴리스틱)"""
-        confidence_indicators = [
-            ('구체적인 메커니즘' in hypothesis or 'mechanism' in hypothesis.lower(), 0.2),
-            ('실험' in hypothesis or 'experiment' in hypothesis.lower(), 0.15),
-            ('문헌' in hypothesis or 'literature' in hypothesis.lower(), 0.15),
-            ('SMILES' in hypothesis or 'smiles' in hypothesis.lower(), 0.1),
-            ('수소결합' in hypothesis or 'hydrogen bond' in hypothesis.lower(), 0.1),
-            ('입체' in hypothesis or 'stereo' in hypothesis.lower(), 0.1),
-            ('분자량' in hypothesis or 'molecular weight' in hypothesis.lower(), 0.1),
-            ('활성' in hypothesis or 'activity' in hypothesis.lower(), 0.1)
-        ]
-        
-        base_confidence = 0.5
-        for indicator, weight in confidence_indicators:
-            if indicator:
-                base_confidence += weight
-        
-        return min(base_confidence, 1.0)
     
     def _extract_key_insights(self, hypothesis: str) -> List[str]:
         """가설에서 핵심 인사이트 추출"""
@@ -279,7 +276,6 @@ class BiomolecularInteractionExpert:
             'agent_type': 'biomolecular_interaction',
             'agent_name': '생체분자 상호작용 전문가',
             'hypothesis': hypothesis,
-            'confidence': self._extract_confidence_from_text(hypothesis),
             'key_insights': self._extract_key_insights(hypothesis),
             'reasoning_steps': self._extract_reasoning_steps(hypothesis),
             'docking_analysis': docking_results,  # 도킹 분석 결과 포함
@@ -304,7 +300,7 @@ class BiomolecularInteractionExpert:
             )
             results['high_active_docking'] = {
                 'binding_affinity': docking_result.binding_affinity,
-                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36),  # nM 단위
+                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36) * 1000,  # nM 단위 (μM에서 변환)
                 'interactions': docking_result.interactions,
                 'rmsd': docking_result.rmsd_lb
             }
@@ -317,7 +313,7 @@ class BiomolecularInteractionExpert:
             )
             results['low_active_docking'] = {
                 'binding_affinity': docking_result.binding_affinity,
-                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36),  # nM 단위
+                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36) * 1000,  # nM 단위 (μM에서 변환)
                 'interactions': docking_result.interactions,
                 'rmsd': docking_result.rmsd_lb
             }
@@ -427,20 +423,21 @@ class BiomolecularInteractionExpert:
         
         **결과 형식 (반드시 이 형식을 정확히 따르세요):**
         
-        신뢰도: [구체적 수치와 근거, 예: 78% - 도킹 스코어 차이와 결합 친화도 예측 기반]
-        
-        핵심 가설: [구체적이고 전문적인 메커니즘, 예: "Phe256과의 π-π 스택킹 상실로 인한 결합 친화도 15배 감소가 주요 원인"]
+        핵심 가설: [구체적이고 전문적인 메커니즘, 예: "Phe256과의 π-π 스택킹 상실로 인한 결합 친화도 감소가 주요 원인"]
         
         상세 분석:
         1. 단백질-리간드 결합: [특정 결합 포켓, 잔기 번호, 상호작용 유형 명시]
         2. 상호작용 패턴: [수소결합 길이, 소수성 접촉 면적의 구체적 변화]
         3. 결합 기하학: [RMSD, 결합각, 비틀림각의 정량적 분석]
-        4. 약리학적 메커니즘: [Ki/Kd 값 예측, 선택성 비율 계산]
-        5. ADMET 영향: [CYP 대사, 혈장 단백질 결합률의 구체적 예측]
+        4. 약리학적 메커니즘: [결합 기전 해석, 선택성 차이 원인 분석]
+        5. ADMET 영향: [대사 패턴 차이, 약동학적 특성 변화 해석]
         
         분자 설계 제안: [특정 치환기 도입 전략 - pKi 예측값 언급 금지]
         
-        **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 친화도, 상호작용 에너지, 특정 아미노산 잔기 번호를 포함한 정량적 분석을 제시하되 예상 pKi 값은 언급하지 마세요.**
+        {ANTI_HALLUCINATION_GUIDELINES}
+        - 제공된 실제 데이터만을 근거로 정성적 메커니즘 해석
+
+        **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 패턴, 상호작용 유형, 특정 아미노산 잔기와의 관계를 포함한 정성적 분석을 제시하되 예상 pKi 값은 언급하지 마세요.**
         """
     
     def _format_docking_results(self, docking_results: Dict) -> str:
@@ -468,44 +465,6 @@ class BiomolecularInteractionExpert:
         
         return formatted
     
-    def _extract_confidence_from_text(self, hypothesis: str) -> float:
-        """가설 텍스트에서 실제 신뢰도 값을 추출"""
-        import re
-        
-        # "신뢰도: XX%" 패턴 찾기
-        confidence_match = re.search(r'신뢰도:.*?(\d+)%', hypothesis)
-        if confidence_match:
-            confidence_value = int(confidence_match.group(1))
-            return confidence_value / 100.0
-        
-        # 영어 패턴도 확인
-        confidence_match = re.search(r'confidence:.*?(\d+)%', hypothesis, re.IGNORECASE)
-        if confidence_match:
-            confidence_value = int(confidence_match.group(1))
-            return confidence_value / 100.0
-        
-        # 추출 실패 시 키워드 기반 계산으로 fallback
-        return self._calculate_confidence_by_keywords(hypothesis)
-    
-    def _calculate_confidence_by_keywords(self, hypothesis: str) -> float:
-        """가설의 신뢰도 계산"""
-        confidence_indicators = [
-            ('결합' in hypothesis or 'binding' in hypothesis.lower(), 0.2),
-            ('단백질' in hypothesis or 'protein' in hypothesis.lower(), 0.15),
-            ('활성부위' in hypothesis or 'active site' in hypothesis.lower(), 0.15),
-            ('상호작용' in hypothesis or 'interaction' in hypothesis.lower(), 0.1),
-            ('친화도' in hypothesis or 'affinity' in hypothesis.lower(), 0.1),
-            ('선택성' in hypothesis or 'selectivity' in hypothesis.lower(), 0.1),
-            ('대사' in hypothesis or 'metabolism' in hypothesis.lower(), 0.1),
-            ('도킹' in hypothesis or 'docking' in hypothesis.lower(), 0.1)
-        ]
-        
-        base_confidence = 0.5
-        for indicator, weight in confidence_indicators:
-            if indicator:
-                base_confidence += weight
-        
-        return min(base_confidence, 1.0)
     
     def _extract_key_insights(self, hypothesis: str) -> List[str]:
         """핵심 인사이트 추출"""
@@ -546,9 +505,11 @@ class QSARExpert:
     
     def __init__(self, llm_client: UnifiedLLMClient):
         self.llm_client = llm_client
-        self.persona = """당신은 정량적 구조-활성 관계(QSAR) 분석의 세계적 전문가입니다.
-        분자 descriptor 계산, 통계 모델링, 머신러닝 기반 활성 예측이 전문 분야이며,
-        Activity Cliff 현상을 정량적 모델과 분자 특성 차이로 설명하는 것이 특기입니다."""
+        self.persona = """당신은 구조-활성 관계(SAR) 분석의 세계적 전문가입니다.
+        제공된 실제 데이터(SMILES, pKi, 물리화학적 특성)를 바탕으로 분자 특성 변화와 활성 차이 간의 
+        정성적 관계를 분석하고, 문헌 근거와 화학적 지식을 토대로 구조-활성 관계 패턴을 해석하는 것이 전문입니다.
+        
+        **중요**: 실제 계산하지 않은 QSAR 모델, 회귀방정식, 통계값(R², RMSE 등)을 절대 생성하지 마세요."""
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """QSAR 관점의 가설 생성"""
@@ -559,7 +520,6 @@ class QSARExpert:
             'agent_type': 'qsar',
             'agent_name': 'QSAR 전문가',
             'hypothesis': hypothesis,
-            'confidence': self._extract_confidence_from_text(hypothesis),
             'key_insights': self._extract_key_insights(hypothesis),
             'reasoning_steps': self._extract_reasoning_steps(hypothesis),
             'timestamp': time.time()
@@ -586,24 +546,24 @@ class QSARExpert:
             - 이 문헌을 전문가 지식의 근거로 활용하여 논리적 추론을 수행하세요.
             """
         
-        # Few-Shot 예시 (SAR 분석 사례)
+        # Few-Shot 예시 (Activity Cliff 활성 차이 원인 분석 사례)
         few_shot_example = """
         **Few-Shot 예시 - 전문가 분석 과정 참조:**
         
-        [예시] ACE 억제제 계열 SAR 분석:
+        [예시] ACE 억제제 계열 Activity Cliff 활성 차이 원인 분석:
         시리즈: 캅토프릴 → 에날라프릴 (pKi: 6.5 → 8.2)
         
-        1. SAR 패턴: 티올기 → 카르복실기 변경으로 1.7 pKi 단위 활성 증가
+        1. 활성 차이 패턴: 티올기 → 카르복실기 변경으로 1.7 pKi 단위 활성 증가
         2. 화학정보학 인사이트: 낮은 Tanimoto 유사도(0.4)에도 큰 활성 차이는 약물발견의 전환점
         3. 신약 개발 전략: 프로드러그 전략 도입으로 ADMET 특성 개선
         4. 최적화 방향: 아연 결합 모티프 최적화가 핵심, 주변 치환기는 선택성 조절
-        5. 예측 모델링: 금속 배위 결합을 고려한 3D-QSAR 모델 필요
+        5. 메커니즘 해석: 금속 배위 결합 강화가 효소-억제제 친화도를 크게 향상시킴
         
         [귀하의 분석 과제]
         """
         
         return f"""
-        당신은 정량적 구조-활성 관계(QSAR) 분석의 세계적 전문가입니다. 분자 descriptor 계산, 통계 모델링, 머신러닝 기반 활성 예측이 전문 분야이며, Activity Cliff 현상을 정량적 모델과 분자 특성 차이로 설명하는 것이 특기입니다.
+        당신은 Activity Cliff 활성 차이 원인 분석의 세계적 전문가입니다. 제공된 실제 데이터를 바탕으로 분자 특성 차이와 활성 변화를 화학적 논리로 해석하는 것이 전문 분야이며, Activity Cliff 현상을 실제 구조 변화와 물리화학적 특성으로 설명하는 것이 특기입니다.
         
         {few_shot_example}
         
@@ -617,7 +577,7 @@ class QSARExpert:
         - 저활성: {low_active['id']} (pKi: {low_active['pki']})
           SMILES: {low_active['smiles']}
         
-        **In-Context SAR 메트릭 (할루시네이션 방지용):**
+        **In-Context Activity Cliff 메트릭 (할루시네이션 방지용):**
         - Cliff 점수: {metrics.get('cliff_score', 0):.3f}
         - 구조 유사도: {metrics['similarity']:.3f} (Tanimoto)
         - 활성 차이: {metrics['activity_difference']} pKi 단위
@@ -631,93 +591,48 @@ class QSARExpert:
         
         {literature_info}
         
-        **단계별 QSAR 분석 수행:**
-        정량적 구조-활성 관계 전문가로서 다음 5단계로 체계적으로 분석하세요:
+        **단계별 Activity Cliff 활성 차이 원인 분석 수행:**
+        구조-활성 관계 전문가로서 제공된 실제 데이터만을 바탕으로 다음 4단계로 분석하세요:
         
-        1. **분자 Descriptor 분석**: 두 화합물 간 주요 분자 descriptor (2D/3D) 차이를 정량화하세요. 어떤 descriptor가 활성 차이와 가장 강한 상관관계를 보이는지 분석하세요.
+        1. **실제 분자 특성 비교**: 제공된 물리화학적 특성 차이(분자량: {prop_diffs['mw_diff']:.2f} Da, LogP: {prop_diffs['logp_diff']:.2f}, TPSA: {prop_diffs.get('tpsa_diff', 0):.2f} Ų)와 SMILES 구조 차이를 분석하세요. 
+           어떤 특성 변화가 {metrics['activity_difference']} pKi 차이와 관련될 수 있는지 해석하세요.
         
-        2. **QSAR 모델 구축**: 기존 데이터셋에서 이 Activity Cliff를 설명할 수 있는 정량적 모델을 제시하세요. 회귀 방정식, 상관계수, 통계적 유의성을 포함하세요.
+        2. **구조-특성 관계 해석**: 두 화합물의 구조적 차이가 물리화학적 특성에 미치는 영향을 분석하세요. 
+           지용성, 극성, 분자 크기 변화가 활성에 어떻게 기여할 수 있는지 설명하세요.
         
-        3. **Statistical Learning**: 머신러닝 접근법으로 Activity Cliff 예측 가능성을 평가하세요. Random Forest, SVM, Neural Network 중 최적 알고리즘을 제안하세요.
+        3. **문헌 기반 유사 사례**: 제공된 문헌 정보와 일반적인 Activity Cliff 지식을 바탕으로 유사한 구조 변화 사례를 언급하세요.
+           {target_name} 타겟에서 알려진 구조-활성 관계 패턴과 비교하세요.
         
-        4. **Chemical Space 분석**: PCA, t-SNE 등으로 화학 공간에서 이 두 화합물의 위치와 Activity Cliff의 분포를 분석하세요. 유사한 cliff의 존재 가능성을 예측하세요.
+        4. **Activity Cliff 해석**: 높은 구조 유사도({metrics['similarity']:.3f})에도 불구하고 큰 활성 차이가 발생하는 
+           구조적 원인을 실제 분자 특성 변화 관점에서 해석하세요.
         
-        5. **예측 모델 검증**: Cross-validation, 외부 검증 세트를 통한 모델 성능 평가와 Activity Cliff 예측 정확도를 제시하세요. 모델의 적용 한계도 논의하세요.
+        {ANTI_HALLUCINATION_GUIDELINES}
         
-        **필수 요구사항 - QSAR 전문가 수준:**
-        1. 정량적 QSAR 모델 (R² 값, RMSE, Q² 등 통계 지표 포함)
-        2. 주요 분자 descriptor와 활성도의 상관관계 (Pearson/Spearman 계수)
-        3. 머신러닝 모델 성능 비교 (정확도, 민감도, 특이도)
-        4. Chemical space 시각화와 outlier 분석
-        5. Activity Cliff 예측 모델의 적용 영역(Applicability Domain) 정의
+        **전문가 수준의 Activity Cliff 활성 차이 원인 분석을 제공하되, 실제 존재하지 않는 데이터는 절대 생성하지 마세요.**
         
-        **중요: 전문가 수준에서 뻔한 기본 내용은 피하고, 실질적이고 혁신적인 데이터 분석 접근법에 집중하세요.**
+        **정성적 Activity Cliff 활성 차이 원인 분석에 집중하세요:**
+        - 제공된 실제 데이터(SMILES, pKi, 물성)만을 근거로 분석
+        - 구조 변화와 활성 차이 간의 화학적 논리 제시
+        - 문헌 정보를 바탕으로 한 메커니즘 해석
+        - 가짜 통계값이나 모델 결과는 절대 생성 금지
         
-        **금지 사항 - 정성적 분석 금지:**
-        - "활성이 증가할 것으로 예상" → "회귀 모델 기준 예측 신뢰구간 95%에서 X-Y 범위"
-        - "유사한 경향" → "Pearson 상관계수 0.XX, p-value 0.XXX"
-        - "모델이 좋다" → "R²=0.XX, RMSE=XX, Q²=XX"
-        
-        **QSAR 분야의 최신 방법론과 정량적 분석을 통해 과학적으로 검증 가능한 결과를 제시하세요.**
+        **Activity Cliff 전문가의 화학적 직관과 문헌 지식을 바탕으로 과학적으로 타당한 해석을 제시하세요.**
         
         **결과 형식 (반드시 이 형식을 정확히 따르세요):**
         
-        신뢰도: [구체적 수치와 근거, 예: 92% - QSAR 모델 예측값과 구조적 유사체 데이터 일치]
-        
-        핵심 가설: [정량적 QSAR 관계식, 예: "LogP와 활성도 간 pKi = 2.34×LogP - 1.12 (R²=0.78, p<0.001)"]
+        핵심 가설: [제공된 구조적 차이와 물리화학적 특성 변화를 바탕으로 한 메커니즘 가설]
         
         상세 분석:
-        1. 분자 Descriptor 분석: [주요 descriptor 변화량과 통계적 유의성]
-        2. QSAR 모델 구축: [회귀방정식, R², RMSE, Q² 등 완전한 통계 정보]
-        3. Statistical Learning: [알고리즘별 성능 비교와 최적 하이퍼파라미터]
-        4. Chemical Space 분석: [PCA 주성분 기여율과 클러스터 분석 결과]
-        5. 예측 모델 검증: [Cross-validation 결과와 Applicability Domain]
+        1. 실제 분자 특성 비교: [제공된 MW, LogP, TPSA 차이와 활성 차이의 연관성 해석]
+        2. 구조-특성 관계: [SMILES 비교를 통한 구조적 차이가 특성에 미치는 영향]
+        3. 문헌 기반 해석: [제공된 문헌 정보와 일반적인 Activity Cliff 지식 활용]
+        4. Activity Cliff 메커니즘: [구조 유사도 대비 큰 활성 차이의 원인 분석]
         
-        분자 설계 제안: [QSAR 모델 기반 최적화된 구조식 3-5개 - 활성값 예측 제외]
+        구조 최적화 방향: [Activity Cliff 활성 차이 원인 분석을 바탕으로 한 일반적인 구조 개선 방향 제안]
         
-        모델 적용 전략: [신규 화합물 스크리닝을 위한 QSAR 모델 활용 방안]
-        
-        **중요: 정량적 QSAR 모델과 통계적 검증을 통해 과학적 근거를 제시하되, 정성적 판단이나 추측은 배제하세요. 모든 결론은 수치적 근거와 통계적 유의성을 포함해야 합니다.**
+        **중요: 실제 제공된 데이터만을 근거로 분석하고, 존재하지 않는 QSAR 모델이나 통계값은 절대 생성하지 마세요.**
         """
     
-    def _extract_confidence_from_text(self, hypothesis: str) -> float:
-        """가설 텍스트에서 실제 신뢰도 값을 추출"""
-        import re
-        
-        # "신뢰도: XX%" 패턴 찾기
-        confidence_match = re.search(r'신뢰도:.*?(\d+)%', hypothesis)
-        if confidence_match:
-            confidence_value = int(confidence_match.group(1))
-            return confidence_value / 100.0
-        
-        # 영어 패턴도 확인
-        confidence_match = re.search(r'confidence:.*?(\d+)%', hypothesis, re.IGNORECASE)
-        if confidence_match:
-            confidence_value = int(confidence_match.group(1))
-            return confidence_value / 100.0
-        
-        # 추출 실패 시 키워드 기반 계산으로 fallback
-        return self._calculate_confidence_by_keywords(hypothesis)
-    
-    def _calculate_confidence_by_keywords(self, hypothesis: str) -> float:
-        """가설의 신뢰도 계산"""
-        confidence_indicators = [
-            ('SAR' in hypothesis or 'sar' in hypothesis.lower(), 0.2),
-            ('최적화' in hypothesis or 'optimization' in hypothesis.lower(), 0.15),
-            ('설계' in hypothesis or 'design' in hypothesis.lower(), 0.15),
-            ('예측' in hypothesis or 'prediction' in hypothesis.lower(), 0.1),
-            ('모델' in hypothesis or 'model' in hypothesis.lower(), 0.1),
-            ('전략' in hypothesis or 'strategy' in hypothesis.lower(), 0.1),
-            ('패턴' in hypothesis or 'pattern' in hypothesis.lower(), 0.1),
-            ('트렌드' in hypothesis or 'trend' in hypothesis.lower(), 0.1)
-        ]
-        
-        base_confidence = 0.5
-        for indicator, weight in confidence_indicators:
-            if indicator:
-                base_confidence += weight
-        
-        return min(base_confidence, 1.0)
     
     def _extract_key_insights(self, hypothesis: str) -> List[str]:
         """핵심 인사이트 추출"""
@@ -753,1100 +668,13 @@ class QSARExpert:
         return steps[:5]
 
 
-# DEPRECATED: ReflectionAgent 클래스 - 사용하지 않음
-# HypothesisEvaluationExpert 클래스로 대체됨
-class ReflectionAgent:
-    """가설 타당성 평가 에이전트"""
-    
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
-        
-    def evaluate_hypotheses(self, domain_hypotheses: List[Dict], shared_context: Dict) -> Dict:
-        """모든 가설을 종합 평가하고 최종 리포트 생성"""
-        
-        st.info("**Phase 3: 종합 평가** - 전체 가설의 장점을 통합하여 최종 리포트를 생성합니다")
-        
-        # 각 가설의 개별 강점과 약점 분석
-        individual_evaluations = []
-        
-        for i, hypothesis in enumerate(domain_hypotheses):
-            with st.spinner(f"{hypothesis['agent_name']} 가설 분석 중..."):
-                evaluation_prompt = self._build_individual_evaluation_prompt(hypothesis, shared_context)
-                
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "당신은 과학적 가설 분석 전문가입니다. 각 가설의 강점과 약점을 객관적으로 분석합니다."},
-                        {"role": "user", "content": evaluation_prompt}
-                    ],
-                    temperature=0.3
-                )
-                
-                evaluation_text = response.choices[0].message.content
-                
-                result = {
-                    'hypothesis_id': i,
-                    'agent_name': hypothesis['agent_name'],
-                    'original_hypothesis': hypothesis,
-                    'evaluation_text': evaluation_text,
-                    'strengths': self._extract_strengths(evaluation_text),
-                    'weaknesses': self._extract_weaknesses(evaluation_text),
-                    'key_insights': self._extract_key_insights(evaluation_text),
-                    'timestamp': time.time()
-                }
-                
-                individual_evaluations.append(result)
-                
-                # 개별 분석 결과 간단히 표시
-                with st.expander(f"📝 {result['agent_name']} 분석 요약", expanded=False):
-                    if result['strengths']:
-                        st.write("**주요 강점:**")
-                        for strength in result['strengths'][:2]:
-                            st.write(f"• {strength}")
-        
-        # 종합 리포트 생성
-        # st.info("📋 **최종 종합 리포트 작성 중...**")
-        final_report = self._generate_comprehensive_report(individual_evaluations, shared_context)
-        
-        return final_report
-    
-    def _build_individual_evaluation_prompt(self, hypothesis: Dict, shared_context: Dict) -> str:
-        """개별 가설 분석용 프롬프트 구성"""
-        return f"""
-        **가설 분석 요청:**
-        
-        **전문가:** {hypothesis['agent_name']}
-        **가설 내용:**
-        {hypothesis['hypothesis']}
-        
-        **분석 요청:**
-        이 가설의 강점, 약점, 핵심 인사이트를 객관적으로 분석해주세요:
-        
-        **분석 형식:**
-        강점: [신뢰할 수 있고 가치 있는 부분들 2-3개]
-        약점: [개선이 필요한 부분들 1-2개]
-        핵심 인사이트: [이 가설에서 얻을 수 있는 중요한 통찰 1-2개]
-        
-        객관적이고 구체적인 분석을 부탁드립니다.
-        """
-    
-    def _generate_comprehensive_report(self, individual_evaluations: List[Dict], shared_context: Dict) -> Dict:
-        """모든 가설의 강점을 통합하여 최종 종합 리포트 생성"""
-        
-        # 모든 가설의 강점과 인사이트 수집
-        all_strengths = []
-        all_insights = []
-        all_hypotheses_text = []
-        
-        for eval_result in individual_evaluations:
-            all_strengths.extend(eval_result.get('strengths', []))
-            all_insights.extend(eval_result.get('key_insights', []))
-            all_hypotheses_text.append(f"**{eval_result['agent_name']}**: {eval_result['original_hypothesis']['hypothesis']}")
-        
-        # 가장 우수한 가설 선정 (강점이 가장 많은 것)
-        best_evaluation = max(individual_evaluations, key=lambda x: len(x.get('strengths', [])))
-        remaining_evaluations = [eval_result for eval_result in individual_evaluations if eval_result != best_evaluation]
-        
-        # 종합 리포트 생성 프롬프트
-        synthesis_prompt = f"""
-        **최종 종합 리포트 작성 요청:**
-        
-        다음은 3명의 전문가가 제시한 가설들입니다:
-        1. **주요 가설 (채택됨)**: {best_evaluation['original_hypothesis']['hypothesis'][:500]}...
-        2. **보조 가설 1**: {remaining_evaluations[0]['original_hypothesis']['hypothesis'][:200]}...
-        3. **보조 가설 2**: {remaining_evaluations[1]['original_hypothesis']['hypothesis'][:200]}...
-        
-        **주요 가설의 핵심 강점:**
-        {chr(10).join([f"• {strength}" for strength in best_evaluation.get('strengths', [])[:4]])}
-        
-        **다른 가설들의 보완 강점:**
-        {chr(10).join([f"• {strength}" for strength in all_strengths[:6] if strength not in best_evaluation.get('strengths', [])])}
-        
-        **작성 지침:**
-        1. **주요 가설을 베이스로 사용**하되, 다른 가설의 우수한 부분으로 보완하세요
-        2. **구체적이고 혁신적인 내용만** 포함하세요. 다음과 같은 진부한 내용은 **절대 포함 금지**:
-           - 뻔한 결론: "실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다"
-           - 일반적 평가: "높은 신뢰도를 가집니다", "이론적 예측을 검증해야 합니다"
-           - 구체성 없는 방법론 언급: 단순한 "도킹 시뮬레이션", "ADMET 예측" 나열
-        3. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
-        4. 각 분석의 고유한 관점과 전문성을 존중하되, 전문가 이름은 명시하지 말고 통합된 결과로 제시하세요
-        
-        **작성 형식:**
-        ### 최종 가설 제안
-        **주요 베이스: 채택된 핵심 분석**
-        
-        **1. 구조적 차이점 분석**
-        [채택된 주요 가설의 구조 분석을 핵심 베이스로 하되, 다른 가설들의 우수한 보완 관점들을 체계적으로 통합하여 완성도 높은 종합 분석을 제시]
-        
-        **2. 작용 기전 가설**
-        [생물학적 메커니즘에 대한 구체적이고 근거 있는 설명]
-        
-        **3. 실험적 근거 및 검증**
-        [기존 실험 데이터나 문헌에서 이 가설을 직접적으로 뒷받침하는 구체적 증거만 제시 - 뻔한 검증 방법론 언급 금지]
-        
-        **4. 분자 설계 제안**
-        [혁신적이고 구체적인 구조 변경 전략만 제시 - 일반적인 최적화 방향 설명 금지]
-        [제안 화합물들의 완성된 SMILES 코드 3-5개 포함 - 각각 명확한 설계 근거 제시]
-        
-        **5. 핵심 통찰**
-        [이 분석에서만 얻을 수 있는 독창적 통찰과 발견사항 - 일반적인 신뢰도/한계점 평가 금지]
-        
-        ### 추가 고려 가설
-        
-        **대안적 접근법:**
-        [보조 가설 1의 독창적 관점과 핵심 통찰을 구체적으로 2-3문장 요약 - 주요 가설과 차별화되는 접근 방식과 근거 포함]
-        
-        **보완적 관점:**
-        [보조 가설 2의 추가적 시각과 보완 요소를 구체적으로 2-3문장 요약 - 전체적 분석의 완성도를 높이는 요소들 포함]
-        
-        **중요 금지사항**: 
-        - 당연하고 뻔한 내용 금지 ("실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다")
-        - 일반적인 신뢰도 평가 금지 ("높은 신뢰도를 가집니다", "이론적 예측을 검증")
-        - 구체적 제안 없는 방법론 언급 금지 ("도킹 시뮬레이션", "ADMET 예측" 등을 단순 나열)
-        **필수 요구사항**: 혁신적 통찰, 구체적 메커니즘, 독창적 발견사항, 구체적 실험 제안만 포함하세요.
-        
-        **SMILES 코드 요구사항**: 분자 설계 제안에서 반드시 다음을 포함하세요:
-        - 제안 화합물 1: [설명] - SMILES: [완성된 SMILES 코드]
-        - 제안 화합물 2: [설명] - SMILES: [완성된 SMILES 코드]  
-        - 제안 화합물 3: [설명] - SMILES: [완성된 SMILES 코드]
-        (필요시 최대 5개까지)
-        """
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "당신은 SAR 분석 종합 전문가입니다. 여러 전문가의 의견을 통합하여 최고 품질의 종합 리포트를 작성합니다."},
-                {"role": "user", "content": synthesis_prompt}
-            ],
-            temperature=0.2
-        )
-        
-        final_hypothesis = response.choices[0].message.content
-        
-        return {
-            'final_hypothesis': final_hypothesis,
-            'individual_evaluations': individual_evaluations,
-            'synthesis_metadata': {
-                'total_strengths_considered': len(all_strengths),
-                'total_insights_integrated': len(all_insights),
-                'synthesis_timestamp': time.time()
-            }
-        }
-    
-    def _parse_evaluation_scores(self, evaluation_text: str) -> Dict[str, float]:
-        """평가 텍스트에서 점수 추출 - 개선된 파싱 로직"""
-        # 기본값을 합리적인 범위로 설정
-        scores = {
-            'scientific_rigor': 75.0,
-            'evidence_integration': 75.0,
-            'practical_applicability': 75.0,
-            'innovation': 75.0
-        }
-        
-        # 더 정확한 점수 추출을 위한 개선된 로직
-        lines = evaluation_text.split('\n')
-        for line in lines:
-            line_lower = line.lower()
-            # 점수 패턴 찾기: "엄밀성: 85점" 또는 "Scientific Rigor: 85"
-            if any(keyword in line_lower for keyword in ['엄밀성', 'rigor', '과학적']):
-                score = self._extract_score_from_line(line)
-                if score is not None and 0 <= score <= 100:
-                    scores['scientific_rigor'] = score
-            elif any(keyword in line_lower for keyword in ['증거', 'evidence', '통합']):
-                score = self._extract_score_from_line(line)
-                if score is not None and 0 <= score <= 100:
-                    scores['evidence_integration'] = score
-            elif any(keyword in line_lower for keyword in ['실용', 'practical', '적용']):
-                score = self._extract_score_from_line(line)
-                if score is not None and 0 <= score <= 100:
-                    scores['practical_applicability'] = score
-            elif any(keyword in line_lower for keyword in ['혁신', 'innovation', '창의']):
-                score = self._extract_score_from_line(line)
-                if score is not None and 0 <= score <= 100:
-                    scores['innovation'] = score
-        
-        # 모든 점수가 유효한 범위 내에 있는지 확인
-        for key, value in scores.items():
-            if not isinstance(value, (int, float)) or value < 0 or value > 100:
-                scores[key] = 75.0  # 안전한 기본값
-        
-        return scores
-    
-    def _extract_score_from_line(self, line: str) -> Optional[float]:
-        """라인에서 점수 추출"""
-        import re
-        # 0-100 범위의 숫자 찾기
-        matches = re.findall(r'\b(\d{1,3})\b', line)
-        for match in matches:
-            score = float(match)
-            if 0 <= score <= 100:
-                return score
-        return None
-    
-    def _extract_feedback(self, evaluation_text: str) -> List[str]:
-        """피드백 추출"""
-        feedback = []
-        lines = evaluation_text.split('\n')
-        in_feedback_section = False
-        
-        for line in lines:
-            line = line.strip()
-            if '개선' in line or 'feedback' in line.lower() or '제안' in line:
-                in_feedback_section = True
-                continue
-            elif in_feedback_section and line and not line.startswith('**'):
-                feedback.append(line)
-            elif in_feedback_section and line.startswith('**'):
-                break
-        
-        return feedback[:3]  # 최대 3개
-    
-    def _extract_strengths(self, evaluation_text: str) -> List[str]:
-        """강점 추출"""
-        strengths = []
-        lines = evaluation_text.split('\n')
-        in_strengths_section = False
-        
-        for line in lines:
-            line = line.strip()
-            if '강점' in line or 'strength' in line.lower():
-                in_strengths_section = True
-                continue
-            elif in_strengths_section and line and not line.startswith('**'):
-                strengths.append(line)
-            elif in_strengths_section and line.startswith('**'):
-                break
-        
-        return strengths[:3]  # 최대 3개
-    
-    def _extract_weaknesses(self, evaluation_text: str) -> List[str]:
-        """약점 추출"""
-        weaknesses = []
-        lines = evaluation_text.split('\n')
-        in_weaknesses_section = False
-        
-        for line in lines:
-            line = line.strip()
-            if '약점' in line or 'weakness' in line.lower():
-                in_weaknesses_section = True
-                continue
-            elif in_weaknesses_section and line and not line.startswith('**'):
-                weaknesses.append(line)
-            elif in_weaknesses_section and line.startswith('**'):
-                break
-        
-        return weaknesses[:2]  # 최대 2개
-    
-    def _extract_key_insights(self, evaluation_text: str) -> List[str]:
-        """평가 텍스트에서 핵심 인사이트 추출"""
-        insights = []
-        lines = evaluation_text.split('\n')
-        
-        in_insights_section = False
-        for line in lines:
-            line = line.strip()
-            if any(keyword in line.lower() for keyword in ['핵심 인사이트', 'key insight', '중요한 통찰', '인사이트']):
-                in_insights_section = True
-                continue
-            elif in_insights_section and line:
-                if line.startswith(('•', '-', '*', '1.', '2.', '3.')):
-                    insight = line.lstrip('•-*123. ').strip()
-                    if insight and len(insight) > 10:
-                        insights.append(insight)
-                elif not any(keyword in line.lower() for keyword in ['강점', '약점', '개선', 'strength', 'weakness']):
-                    if len(line) > 10:
-                        insights.append(line)
-                else:
-                    break
-        
-        return insights[:2]  # 최대 2개
-    
-    def _display_reflection_result(self, result: Dict):
-        """평가 결과 표시"""
-        with st.expander(f"📝 {result['agent_name']} 평가 결과", expanded=False):
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.write("**평가 요약:**")
-                st.write(result['evaluation_text'][:200] + "..." if len(result['evaluation_text']) > 200 else result['evaluation_text'])
-                
-                if result['strengths']:
-                    st.write("**주요 강점:**")
-                    for strength in result['strengths']:
-                        st.write(f"• {strength}")
-                        
-                if result['weaknesses']:
-                    st.write("**개선점:**")
-                    for weakness in result['weaknesses']:
-                        st.write(f"• {weakness}")
-            
-            with col2:
-                st.write("**평가 점수:**")
-                avg_score = sum(result['scores'].values()) / len(result['scores'])
-                st.metric("종합 점수", f"{avg_score:.1f}/100")
-                
-                for criterion, score in result['scores'].items():
-                    criterion_kr = {
-                        'scientific_rigor': '과학적 엄밀성',
-                        'evidence_integration': '증거 통합',
-                        'practical_applicability': '실용성',
-                        'innovation': '혁신성'
-                    }.get(criterion, criterion)
-                    st.metric(criterion_kr, f"{score:.1f}")
-
-
-class EloRankingAgent:
-    """Elo 시스템 기반 순위 매김 에이전트"""
-    
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
-        self.initial_elo = 1500  # 초기 Elo 점수
-        self.k_factor = 32  # Elo 업데이트 계수
-        
-    async def perform_elo_comparisons(self, reflection_results: List[Dict], criteria_weights: Dict = None) -> Tuple[List[Dict], float]:
-        """Elo 시스템으로 가설 간 상대적 우수성 평가"""
-        
-        if criteria_weights is None:
-            criteria_weights = {
-                'logical_consistency': 0.4,
-                'research_relevance': 0.3,
-                'innovation': 0.3
-            }
-        
-        st.info("🏆 **Phase 4: Ranking** - Elo 시스템으로 가설 순위 매김중...")
-        
-        # 초기 Elo 점수 설정
-        elo_scores = {i: self.initial_elo for i in range(len(reflection_results))}
-        
-        comparison_results = []
-        total_comparisons = len(reflection_results) * (len(reflection_results) - 1) // 2
-        current_comparison = 0
-        
-        # 진행 상황 표시
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # 모든 가설 쌍에 대해 비교 수행
-        for i in range(len(reflection_results)):
-            for j in range(i + 1, len(reflection_results)):
-                current_comparison += 1
-                progress = current_comparison / total_comparisons
-                progress_bar.progress(progress)
-                status_text.text(f"Elo 비교 진행중... ({current_comparison}/{total_comparisons})")
-                
-                hypothesis_a = reflection_results[i]
-                hypothesis_b = reflection_results[j]
-                
-                # 쌍별 비교 수행
-                comparison_result = await self._compare_hypotheses_pair(
-                    hypothesis_a, hypothesis_b, criteria_weights
-                )
-                
-                # Elo 점수 업데이트
-                old_elo_a, old_elo_b = elo_scores[i], elo_scores[j]
-                new_elo_a, new_elo_b = self._update_elo_scores(
-                    old_elo_a, old_elo_b, comparison_result
-                )
-                
-                elo_scores[i] = new_elo_a
-                elo_scores[j] = new_elo_b
-                
-                # 비교 과정 시각화
-                self._display_elo_comparison(hypothesis_a, hypothesis_b, comparison_result, 
-                                           new_elo_a, new_elo_b, old_elo_a, old_elo_b)
-                
-                comparison_results.append({
-                    'pair': (i, j),
-                    'winner': comparison_result['winner'],
-                    'reasoning': comparison_result['reasoning'],
-                    'confidence': comparison_result['confidence'],
-                    'elo_change': (new_elo_a - old_elo_a, new_elo_b - old_elo_b)
-                })
-        
-        # 최종 순위 매김
-        ranked_hypotheses = self._rank_by_elo_scores(reflection_results, elo_scores)
-        consensus_score = self._calculate_consensus_score(elo_scores)
-        
-        # 최종 Elo 순위 표시
-        self._display_final_elo_ranking(ranked_hypotheses, elo_scores, consensus_score)
-        
-        return ranked_hypotheses, consensus_score
-    
-    async def _compare_hypotheses_pair(self, hyp_a: Dict, hyp_b: Dict, criteria_weights: Dict) -> Dict:
-        """두 가설을 직접 비교하여 우수한 가설 선정"""
-        
-        comparison_prompt = f"""
-        **가설 비교 요청:**
-        
-        다음 두 가설을 객관적으로 비교하고 어느 것이 더 우수한지 판단하세요.
-        
-        **평가 기준 가중치:**
-        - 논리적 일관성: {criteria_weights['logical_consistency']:.1f}
-        - 기존 연구 연관성: {criteria_weights['research_relevance']:.1f}
-        - 혁신성: {criteria_weights['innovation']:.1f}
-        
-        **가설 A ({hyp_a['agent_name']}):**
-        {hyp_a['original_hypothesis']['hypothesis']}
-        
-        평가 점수: {hyp_a['scores']}
-        
-        **가설 B ({hyp_b['agent_name']}):**
-        {hyp_b['original_hypothesis']['hypothesis']}
-        
-        평가 점수: {hyp_b['scores']}
-        
-        **비교 결과를 JSON 형식으로 제공하세요:**
-        {{
-            "winner": "A" 또는 "B",
-            "confidence": 0.5-1.0,
-            "reasoning": "구체적인 비교 이유 (100자 이내)",
-            "criteria_analysis": {{
-                "logical_consistency": "A 또는 B가 우수한 이유",
-                "research_relevance": "A 또는 B가 우수한 이유", 
-                "innovation": "A 또는 B가 우수한 이유"
-            }}
-        }}
-        """
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "당신은 과학적 가설 비교 전문가입니다. 객관적이고 일관된 평가를 제공합니다."},
-                {"role": "user", "content": comparison_prompt}
-            ],
-            temperature=0.2
-        )
-        
-        try:
-            response_text = response.choices[0].message.content.strip()
-            
-            # JSON 블록을 찾아서 추출
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            
-            if json_start != -1 and json_end > json_start:
-                json_text = response_text[json_start:json_end]
-                result = json.loads(json_text)
-                
-                # 필수 필드 검증 및 보완
-                if "winner" not in result:
-                    result["winner"] = "A"
-                if "confidence" not in result:
-                    result["confidence"] = 0.6
-                if "reasoning" not in result:
-                    result["reasoning"] = "비교 분석 완료"
-                if "criteria_analysis" not in result:
-                    result["criteria_analysis"] = {}
-            else:
-                raise ValueError("JSON 형식을 찾을 수 없음")
-                
-        except Exception as e:
-            # JSON 파싱 실패 시 응답 텍스트 기반으로 휴리스틱 분석
-            response_text = response.choices[0].message.content.lower()
-            
-            # A 또는 B 승자 결정
-            winner = "B"  # 기본값
-            if "가설 a" in response_text and "우수" in response_text:
-                winner = "A"
-            elif "가설 b" in response_text and "우수" in response_text:
-                winner = "B"
-            
-            # 신뢰도 추정
-            confidence = 0.7
-            if "확실" in response_text or "명확" in response_text:
-                confidence = 0.8
-            elif "애매" in response_text or "유사" in response_text:
-                confidence = 0.6
-            
-            result = {
-                "winner": winner,
-                "confidence": confidence,
-                "reasoning": f"응답 기반 분석: {response.choices[0].message.content[:100]}..." if hasattr(response.choices[0].message, 'content') else "분석 완료",
-                "criteria_analysis": {
-                    "logical_consistency": f"가설 {winner}가 논리적으로 더 일관성 있음",
-                    "research_relevance": f"가설 {winner}가 연구와 더 관련성 높음",
-                    "innovation": f"가설 {winner}가 더 혁신적 관점 제시"
-                }
-            }
-        
-        return result
-    
-    def _update_elo_scores(self, elo_a: float, elo_b: float, comparison_result: Dict) -> Tuple[float, float]:
-        """Elo 점수 업데이트"""
-        # 예상 승률 계산
-        expected_a = 1 / (1 + 10 ** ((elo_b - elo_a) / 400))
-        expected_b = 1 - expected_a
-        
-        # 실제 결과 (winner에 따라)
-        if comparison_result['winner'] == 'A':
-            actual_a, actual_b = 1, 0
-        else:
-            actual_a, actual_b = 0, 1
-        
-        # 신뢰도를 반영한 K-factor 조정
-        confidence = comparison_result.get('confidence', 0.6)
-        adjusted_k = self.k_factor * confidence
-        
-        # 새로운 Elo 점수 계산
-        new_elo_a = elo_a + adjusted_k * (actual_a - expected_a)
-        new_elo_b = elo_b + adjusted_k * (actual_b - expected_b)
-        
-        return new_elo_a, new_elo_b
-    
-    def _rank_by_elo_scores(self, reflection_results: List[Dict], elo_scores: Dict) -> List[Dict]:
-        """Elo 점수를 기준으로 가설 순위 매김"""
-        # (index, elo_score) 튜플로 변환 후 정렬
-        sorted_indices = sorted(elo_scores.items(), key=lambda x: x[1], reverse=True)
-        
-        ranked_hypotheses = []
-        for rank, (index, elo_score) in enumerate(sorted_indices):
-            hypothesis = reflection_results[index].copy()
-            hypothesis['rank'] = rank + 1
-            hypothesis['elo_score'] = elo_score
-            hypothesis['elo_rating'] = self._get_elo_rating(elo_score)
-            ranked_hypotheses.append(hypothesis)
-        
-        return ranked_hypotheses
-    
-    def _get_elo_rating(self, elo_score: float) -> str:
-        """Elo 점수를 등급으로 변환"""
-        if elo_score >= 1700:
-            return "S급 (탁월)"
-        elif elo_score >= 1600:
-            return "A급 (우수)"
-        elif elo_score >= 1500:
-            return "B급 (평균)"
-        elif elo_score >= 1400:
-            return "C급 (보통)"
-        else:
-            return "D급 (미흡)"
-    
-    def _calculate_consensus_score(self, elo_scores: Dict) -> float:
-        """Elo 점수 분산을 바탕으로 합의도 계산"""
-        scores = list(elo_scores.values())
-        if len(scores) <= 1:
-            return 1.0
-        
-        mean_score = sum(scores) / len(scores)
-        variance = sum((score - mean_score) ** 2 for score in scores) / len(scores)
-        std_dev = variance ** 0.5
-        
-        # 표준편차를 0-1 범위의 합의도로 변환 (낮은 표준편차 = 높은 합의도)
-        # 표준편차 100 이상은 합의도 0, 0은 합의도 1로 설정
-        consensus_score = max(0, 1 - (std_dev / 100))
-        
-        return consensus_score
-    
-    def _display_elo_comparison(self, hyp_a: Dict, hyp_b: Dict, comparison_result: Dict, 
-                               elo_a: float, elo_b: float, old_elo_a: float, old_elo_b: float):
-        """Elo 비교 과정 표시"""
-        with st.expander(f"⚔️ Elo 비교: {hyp_a['agent_name']} vs {hyp_b['agent_name']}", expanded=False):
-            col1, col2, col3 = st.columns([1, 1, 1])
-            
-            with col1:
-                st.write("**가설 A**")
-                st.write(hyp_a['agent_name'])
-                elo_change_a = elo_a - old_elo_a
-                st.metric("Elo 점수", f"{elo_a:.0f}", f"{elo_change_a:+.0f}")
-                
-            with col2:
-                st.write("**비교 결과**")
-                winner_name = hyp_a['agent_name'] if comparison_result['winner'] == 'A' else hyp_b['agent_name']
-                st.success(f"🏆 {winner_name}")
-                # 신뢰도 표시 제거
-                
-            with col3:
-                st.write("**가설 B**")
-                st.write(hyp_b['agent_name'])
-                elo_change_b = elo_b - old_elo_b
-                st.metric("Elo 점수", f"{elo_b:.0f}", f"{elo_change_b:+.0f}")
-            
-            st.write("**비교 근거:**")
-            st.write(comparison_result['reasoning'])
-    
-    def _display_final_elo_ranking(self, ranked_hypotheses: List[Dict], elo_scores: Dict, consensus_score: float):
-        """최종 Elo 순위 표시"""
-        with st.container():
-            st.markdown("### 🏆 최종 Elo 순위")
-            
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                for i, hypothesis in enumerate(ranked_hypotheses):
-                    rank_emoji = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
-                    st.write(f"{rank_emoji} **{hypothesis['agent_name']}** - Elo: {hypothesis['elo_score']:.0f} ({hypothesis['elo_rating']})")
-            
-            with col2:
-                st.metric("에이전트 간 합의도", f"{consensus_score:.2f}", 
-                         "높음" if consensus_score >= 0.8 else "보통" if consensus_score >= 0.6 else "낮음")
-                
-                avg_elo = sum(elo_scores.values()) / len(elo_scores)
-                st.metric("평균 Elo 점수", f"{avg_elo:.0f}")
-
-
-class EvolutionAgent:
-    """Self-Play 가설 개선 에이전트"""
-    
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
-        
-    async def self_play_improvement(self, ranked_hypotheses: List[Dict], consensus_score: float, shared_context: Dict) -> List[Dict]:
-        """Self-Play 논쟁을 통한 가설 개선"""
-        
-        if consensus_score >= 0.8:
-            st.info("✅ **Phase 5A: Evolution** - 에이전트 간 합의도가 높아 Evolution 단계를 생략합니다.")
-            st.metric("합의도 점수", f"{consensus_score:.2f}", "높음 (≥0.8)")
-            return ranked_hypotheses
-            
-        st.info("⚔️ **Phase 5A: Evolution** - Self-Play 논쟁을 통한 가설 개선 진행중...")
-        st.metric("합의도 점수", f"{consensus_score:.2f}", "낮음 (<0.8)")
-        
-        improved_hypotheses = []
-        
-        # 상위 2개 가설에 대해서만 Self-Play 진행 (시간 절약)
-        for i, hypothesis in enumerate(ranked_hypotheses[:2]):
-            st.markdown(f"### 🥊 가설 {i+1} Self-Play 논쟁")
-            
-            # 1단계: 대안 가설 생성
-            st.write("**1단계: 대안 가설 생성**")
-            with st.spinner("대안 가설 생성 중..."):
-                alternative = await self._generate_alternative_hypothesis(hypothesis, shared_context)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**원본 가설**")
-                st.write(hypothesis['original_hypothesis']['hypothesis'][:200] + "...")
-            with col2:
-                st.write("**대안 가설**")
-                st.write(alternative['hypothesis'][:200] + "...")
-            
-            # 2단계: 3라운드 논쟁 시뮬레이션
-            st.write("**2단계: 논쟁 시뮬레이션 (3라운드)**")
-            debate_results = []
-            
-            for round_num in range(1, 4):
-                st.write(f"**라운드 {round_num}**")
-                
-                with st.spinner(f"라운드 {round_num} 논쟁 진행 중..."):
-                    debate_round = await self._simulate_debate_round(
-                        hypothesis, alternative, shared_context, round_num
-                    )
-                
-                debate_results.append(debate_round)
-                
-                # 라운드별 결과 표시
-                self._display_debate_round_result(debate_round, round_num)
-            
-            # 3단계: 개선된 가설 합성
-            st.write("**3단계: 개선된 가설 합성**")
-            with st.spinner("개선된 가설 합성 중..."):
-                improved = await self._synthesize_improved_hypothesis(
-                    hypothesis, alternative, debate_results, shared_context
-                )
-            
-            # 개선 결과 표시
-            self._display_improvement_result(hypothesis, improved)
-            
-            improved_hypotheses.append(improved)
-        
-        # 개선되지 않은 나머지 가설들도 포함
-        for hypothesis in ranked_hypotheses[2:]:
-            improved_hypotheses.append(hypothesis)
-        
-        return improved_hypotheses
-    
-    async def _generate_alternative_hypothesis(self, original_hypothesis: Dict, shared_context: Dict) -> Dict:
-        """원본 가설의 대안 생성"""
-        
-        prompt = f"""
-        **대안 가설 생성 요청:**
-        
-        다음 원본 가설에 대한 건설적인 대안을 제시해주세요:
-        
-        **원본 가설 ({original_hypothesis['agent_name']}):**
-        {original_hypothesis['original_hypothesis']['hypothesis']}
-        
-        **Activity Cliff 맥락:**
-        {shared_context['cliff_summary']}
-        
-        **대안 생성 지침:**
-        1. 원본 가설의 핵심 아이디어는 유지하되, 다른 관점이나 메커니즘 제시
-        2. 동일한 데이터를 다르게 해석할 수 있는 과학적 근거 제공
-        3. 원본보다 더 구체적이거나 포괄적인 설명 시도
-        4. 실험적 검증 방법도 함께 제안
-        
-        **결과 형식:**
-        - 대안의 핵심 차이점: [원본과의 주요 차이]
-        - 대안 가설: [상세한 대안 설명]
-        - 우수성 주장: [왜 이 대안이 고려될 만한가]
-        """
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "당신은 창의적이고 비판적 사고력을 가진 과학자입니다."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.8
-        )
-        
-        return {
-            'hypothesis': response.choices[0].message.content,
-            'type': 'alternative',
-            'source': 'evolution_agent',
-            'timestamp': time.time()
-        }
-    
-    async def _simulate_debate_round(self, original: Dict, alternative: Dict, shared_context: Dict, round_num: int) -> Dict:
-        """한 라운드의 논쟁 시뮬레이션"""
-        
-        debate_prompt = f"""
-        **라운드 {round_num} 과학적 논쟁 시뮬레이션:**
-        
-        **원본 가설 입장:**
-        {original['original_hypothesis']['hypothesis']}
-        
-        **대안 가설 입장:**
-        {alternative['hypothesis']}
-        
-        **논쟁 맥락:**
-        {shared_context['cliff_summary']}
-        
-        **논쟁 규칙:**
-        1. 각 가설은 상대방의 약점을 지적하고 자신의 강점을 주장
-        2. 과학적 근거와 데이터를 바탕으로 논증
-        3. 건설적이고 객관적인 토론 유지
-        4. 라운드 {round_num}에 맞는 논쟁 깊이 조절
-        
-        **결과를 JSON 형식으로 제공:**
-        {{
-            "original_argument": "원본 가설의 주장 (100자 이내)",
-            "alternative_argument": "대안 가설의 주장 (100자 이내)",
-            "round_winner": "original" 또는 "alternative",
-            "key_points": ["핵심 논점 1", "핵심 논점 2"],
-            "evidence_cited": ["인용된 증거 1", "인용된 증거 2"],
-            "next_round_focus": "다음 라운드에서 집중할 주제"
-        }}
-        """
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "당신은 과학적 논쟁의 공정한 중재자입니다."},
-                {"role": "user", "content": debate_prompt}
-            ],
-            temperature=0.6
-        )
-        
-        try:
-            result = json.loads(response.choices[0].message.content)
-        except:
-            # JSON 파싱 실패 시 기본값
-            result = {
-                "original_argument": "원본 가설 주장",
-                "alternative_argument": "대안 가설 주장",
-                "round_winner": "original",
-                "key_points": ["논쟁 진행"],
-                "evidence_cited": ["데이터 기반 논증"],
-                "next_round_focus": "심화 논의"
-            }
-        
-        return result
-    
-    async def _synthesize_improved_hypothesis(self, original: Dict, alternative: Dict, debate_results: List[Dict], shared_context: Dict) -> Dict:
-        """논쟁 결과를 바탕으로 개선된 가설 합성"""
-        
-        # 논쟁 결과 요약
-        debate_summary = "\n".join([
-            f"라운드 {i+1}: {result['key_points']}" for i, result in enumerate(debate_results)
-        ])
-        
-        synthesis_prompt = f"""
-        **개선된 가설 합성 요청:**
-        
-        **원본 가설:**
-        {original['original_hypothesis']['hypothesis']}
-        
-        **대안 가설:**
-        {alternative['hypothesis']}
-        
-        **3라운드 논쟁 결과:**
-        {debate_summary}
-        
-        **합성 지침:**
-        1. 논쟁에서 나온 최고의 아이디어들을 통합
-        2. 각 가설의 강점을 결합하고 약점을 보완
-        3. 논쟁 과정에서 발견된 새로운 인사이트 반영
-        4. 더 강력하고 포괄적인 가설로 발전
-        
-        **결과 형식:**
-        - 개선 요약: [어떤 점이 개선되었는가]
-        - 개선된 가설: [최종 통합 가설]
-        - 신뢰도 향상: [왜 더 신뢰할 만한가]
-        - 검증 방법: [제안된 실험적 검증]
-        """
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "당신은 과학적 통합과 종합의 전문가입니다."},
-                {"role": "user", "content": synthesis_prompt}
-            ],
-            temperature=0.5
-        )
-        
-        improved_hypothesis = original.copy()
-        improved_content = response.choices[0].message.content
-        
-        # final_hypothesis 필드 업데이트 (display_final_results 호환성)
-        improved_hypothesis['final_hypothesis'] = improved_content
-        improved_hypothesis['improved_hypothesis'] = improved_content
-        improved_hypothesis['evolution_applied'] = True
-        improved_hypothesis['debate_results'] = debate_results
-        improved_hypothesis['alternative_hypothesis'] = alternative
-        improved_hypothesis['improvement_timestamp'] = time.time()
-        
-        # 점수도 약간 향상시킴
-        if 'final_score' in improved_hypothesis:
-            improved_hypothesis['final_score'] = min(improved_hypothesis['final_score'] + 5, 100)
-        
-        return improved_hypothesis
-    
-    def _display_debate_round_result(self, round_result: Dict, round_num: int):
-        """논쟁 라운드 결과 표시"""
-        with st.expander(f"라운드 {round_num} 상세 결과", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**원본 가설 주장:**")
-                st.write(round_result['original_argument'])
-                
-            with col2:
-                st.write("**대안 가설 주장:**")
-                st.write(round_result['alternative_argument'])
-            
-            winner_text = "원본 가설" if round_result['round_winner'] == 'original' else "대안 가설"
-            st.info(f"🏆 라운드 {round_num} 승자: {winner_text}")
-            
-            if round_result.get('key_points'):
-                st.write("**핵심 논점:**")
-                for point in round_result['key_points']:
-                    st.write(f"• {point}")
-    
-    def _display_improvement_result(self, original: Dict, improved: Dict):
-        """개선 결과 표시"""
-        with st.container():
-            st.markdown("####Self-Play 개선 결과")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**원본 가설:**")
-                st.write(original['original_hypothesis']['hypothesis'][:150] + "...")
-                
-            with col2:
-                st.write("**개선된 가설:**")
-                improved_text = improved.get('improved_hypothesis', '개선 결과 없음')
-                st.write(improved_text[:150] + "...")
-            
-            if improved.get('evolution_applied'):
-                st.success("✨ Self-Play 논쟁을 통해 성공적으로 개선되었습니다!")
-            else:
-                st.info("논쟁 결과 원본 가설이 충분히 우수하다고 판단되었습니다.")
-
-
-class MetaReviewAgent:
-    """최종 품질 검토 및 종합 리포트 생성 에이전트"""
-    
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"
-        
-    async def compile_final_report(self, final_hypotheses: List[Dict], shared_context: Dict) -> Dict:
-        """최종 품질 검토 및 종합 리포트 생성"""
-        
-        st.info("**Phase 5B: Meta-Review** - 최종 품질 검토 및 리포트 통합중...")
-        
-        # 각 가설에 대한 최종 품질 평가
-        quality_assessments = []
-        
-        for i, hypothesis in enumerate(final_hypotheses):
-            with st.spinner(f"가설 {i+1} 품질 평가 중..."):
-                assessment = await self._assess_hypothesis_quality(hypothesis, shared_context)
-                quality_assessments.append(assessment)
-                
-                # 품질 평가 결과 표시
-                self._display_quality_assessment(hypothesis, assessment, i+1)
-        
-        # 종합 리포트 생성
-        with st.spinner("종합 리포트 생성 중..."):
-            comprehensive_report = await self._generate_comprehensive_report(
-                final_hypotheses, quality_assessments, shared_context
-            )
-        
-        return comprehensive_report
-    
-    async def _assess_hypothesis_quality(self, hypothesis: Dict, shared_context: Dict) -> Dict:
-        """개별 가설의 품질 평가"""
-        
-        # 개선된 가설이 있으면 그것을 평가, 없으면 원본 평가
-        hypothesis_text = hypothesis.get('improved_hypothesis', 
-                                       hypothesis.get('original_hypothesis', {}).get('hypothesis', ''))
-        
-        quality_prompt = f"""
-        **가설 품질 종합 평가:**
-        
-        **평가 대상 가설:**
-        {hypothesis_text}
-        
-        **맥락 정보:**
-        - 에이전트: {hypothesis.get('agent_name', 'Unknown')}
-        - Evolution 적용: {hypothesis.get('evolution_applied', False)}
-        - Elo 순위: {hypothesis.get('rank', 'N/A')}
-        
-        **평가 기준:**
-        1. **과학적 엄밀성** (Scientific Rigor): 논리적 일관성, 과학적 근거의 타당성
-        2. **논리적 일관성** (Logical Coherence): 추론 과정의 체계성과 명확성
-        3. **증거 통합** (Evidence Integration): 데이터와 문헌 정보의 효과적 활용
-        4. **실용적 적용가능성** (Practical Applicability): 실제 연구/개발에의 적용 가능성
-        
-        **평가 결과를 JSON 형식으로 제공:**
-        {{
-            "overall_score": 0-100,
-            "criteria_scores": {{
-                "scientific_rigor": 0-100,
-                "logical_coherence": 0-100,
-                "evidence_integration": 0-100,
-                "practical_applicability": 0-100
-            }},
-            "strengths": ["강점1", "강점2", "강점3"],
-            "weaknesses": ["약점1", "약점2"],
-            "recommendations": ["개선제안1", "개선제안2"],
-            "confidence_level": "높음/보통/낮음",
-            "research_impact": "높은 영향/보통 영향/낮은 영향"
-        }}
-        """
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "당신은 과학적 품질 평가의 최고 전문가입니다. 객관적이고 건설적인 평가를 제공합니다."},
-                {"role": "user", "content": quality_prompt}
-            ],
-            temperature=0.2
-        )
-        
-        try:
-            assessment = json.loads(response.choices[0].message.content)
-        except:
-            # JSON 파싱 실패 시 기본값
-            assessment = {
-                "overall_score": 75,
-                "criteria_scores": {
-                    "scientific_rigor": 75,
-                    "logical_coherence": 75,
-                    "evidence_integration": 75,
-                    "practical_applicability": 75
-                },
-                "strengths": ["과학적 근거 제시", "논리적 설명", "실용적 접근"],
-                "weaknesses": ["추가 검증 필요"],
-                "recommendations": ["실험적 검증 수행"],
-                "confidence_level": "보통",
-                "research_impact": "보통 영향"
-            }
-        
-        return assessment
-    
-    async def _generate_comprehensive_report(self, final_hypotheses: List[Dict], quality_assessments: List[Dict], shared_context: Dict) -> Dict:
-        """종합 리포트 생성"""
-        
-        # 최고 품질 가설들 선별 (상위 3개)
-        top_hypotheses = []
-        for i, (hypothesis, assessment) in enumerate(zip(final_hypotheses[:3], quality_assessments[:3])):
-            final_hypothesis_text = hypothesis.get('improved_hypothesis', 
-                                                 hypothesis.get('original_hypothesis', {}).get('hypothesis', ''))
-            
-            top_hypotheses.append({
-                'rank': i + 1,
-                'agent_name': hypothesis.get('agent_name', 'Unknown'),
-                'final_hypothesis': final_hypothesis_text,
-                'final_score': assessment['overall_score'],
-                'quality_scores': assessment['criteria_scores'],
-                'evolution_applied': hypothesis.get('evolution_applied', False),
-                'elo_score': hypothesis.get('elo_score', 1500),
-                'strengths': assessment['strengths'],
-                'weaknesses': assessment['weaknesses'],
-                'confidence_level': assessment['confidence_level'],
-                'research_impact': assessment['research_impact']
-            })
-        
-        # 프로세스 메타데이터
-        total_time = time.time() - shared_context.get('timestamp', time.time())
-        evolution_count = sum(1 for h in final_hypotheses if h.get('evolution_applied', False))
-        
-        comprehensive_report = {
-            'ranked_hypotheses': top_hypotheses,
-            'process_metadata': {
-                'total_time': total_time,
-                'evolution_applied': f"{evolution_count}개 가설 개선됨" if evolution_count > 0 else "생략됨",
-                'total_agents': len(final_hypotheses),
-                'elo_consensus': final_hypotheses[0].get('consensus_score', 0) if final_hypotheses else 0
-            },
-            'literature_context': shared_context.get('literature_context'),
-            'cliff_context': shared_context.get('cliff_summary'),
-            'generation_timestamp': datetime.now().isoformat(),
-            'system_version': '온라인 토론 시스템 v1.0'
-        }
-        
-        return comprehensive_report
-    
-    def _display_quality_assessment(self, hypothesis: Dict, assessment: Dict, rank: int):
-        """품질 평가 결과 표시"""
-        with st.expander(f"📊 가설 {rank} 품질 평가 - {hypothesis.get('agent_name', 'Unknown')}", expanded=False):
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.write("**종합 평가:**")
-                overall_score = assessment['overall_score']
-                score_color = "🟢" if overall_score >= 80 else "🟡" if overall_score >= 60 else "🔴"
-                st.write(f"{score_color} 종합 점수: {overall_score}/100")
-                
-                if assessment.get('strengths'):
-                    st.write("**주요 강점:**")
-                    for strength in assessment['strengths'][:3]:
-                        st.write(f"• {strength}")
-                        
-                if assessment.get('weaknesses'):
-                    st.write("**개선점:**")
-                    for weakness in assessment['weaknesses'][:2]:
-                        st.write(f"• {weakness}")
-            
-            with col2:
-                st.write("**세부 점수:**")
-                criteria_names = {
-                    'scientific_rigor': '과학적 엄밀성',
-                    'logical_coherence': '논리적 일관성', 
-                    'evidence_integration': '증거 통합',
-                    'practical_applicability': '실용성'
-                }
-                
-                for criterion, score in assessment['criteria_scores'].items():
-                    criterion_kr = criteria_names.get(criterion, criterion)
-                    st.metric(criterion_kr, f"{score}/100")
-                
-                st.metric("연구 영향", assessment.get('research_impact', '보통 영향'))
-
-
 class HypothesisEvaluationExpert:
     """가설 평가 전문가 에이전트 - shared_context를 완전히 활용한 맥락 기반 평가"""
     
     def __init__(self, llm_client: UnifiedLLMClient):
         self.llm_client = llm_client
         self.persona = """당신은 15년 경력의 SAR 분석 평가 전문가입니다.
-        Activity Cliff 분석, 가설 검증, 과학적 엄밀성 평가에 특화되어 있으며,
+        Activity Cliff 구조 활성 차이 원인 분석, 가설 검증, 과학적 엄밀성 평가에 특화되어 있으며,
         실제 데이터와 문헌 근거를 바탕으로 객관적이고 일관된 평가를 수행합니다."""
     
     def evaluate(self, hypothesis: Dict, shared_context: Dict) -> Dict:
@@ -1893,12 +721,12 @@ class HypothesisEvaluationExpert:
     {cliff_info}
     {literature_info}
     
-    **평가_항목.md 기준 (가중치 적용):**
-    1. **MMP 재검증 (40%)**: SMILES, pIC50 재확인, 물성 재계산(MolWt, LogP, HBD/HBA), 시각화 교차검증 정확성
-    2. **SAR 분석 (40%)**: 활성 변화 및 기저 변화 분석의 타당성, 인용 적절성
-    3. **타겟 키워드 (20%)**: {target_name} 타겟(EGFR/PRMT5/USP1 등) 충족도, 키워드 반영도
+    **평가 기준 (가중치 적용):**
+    1. **MMP 재검증 (40%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pKi/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
+    2. **SAR 분석 (40%)**: 구조 변화 → 메커니즘 → 활성 변화의 논리가 타당한지, 제시한 메커니즘이 화학적으로 합리적인지, 구체적 분석인지 평가  
+    3. **타겟 키워드 (20%)**: {target_name} 타겟 특이적 언급, kinase domain/binding site 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
     
-    **중요**: 가설이 실제 데이터(pKi 값, 구조 유사도, 활성도 차이)와 얼마나 부합하는지 반드시 고려하세요.
+    **핵심 질문**: 구조적으로 유사한 두 화합물이 {metrics.get('activity_difference', 'N/A')} pKi 차이를 보이는 구조 활성 차이의 원인은 무엇인가?
     
     **결과를 JSON 형식으로 제공:**
     {{
@@ -1908,7 +736,14 @@ class HypothesisEvaluationExpert:
         "overall_score": [가중평균: (mmp_validation*0.4 + sar_analysis*0.4 + target_keywords*0.2)],
         "strengths": ["강점1", "강점2", "강점3"],
         "weaknesses": ["약점1", "약점2"],
-        "evaluation_rationale": "평가_항목.md 기준에서 이 가설이 어떤 점에서 우수하거나 부족한지 설명"
+        "evaluation_rationale": "이 가설이 Activity Cliff 구조 활성 차이 원인을 얼마나 잘 규명하는지 평가 근거",
+        "utilization_plan": {{
+            "role": "이 가설의 역할 (예: 주요 베이스, 구조 분석 보완, 메커니즘 설명 보강 등)",
+            "utilization_level": "활용 수준 (예: 전체 활용, 핵심 부분만 활용, 특정 통찰만 활용)",
+            "core_utilization_parts": ["활용할 구체적 부분1", "활용할 구체적 부분2", "활용할 구체적 부분3"],
+            "complementary_parts": ["추가로 보완할 부분1", "추가로 보완할 부분2"],
+            "contribution_to_final": "이 가설이 최종 종합 리포트에서 담당할 구체적 역할과 기여 내용"
+        }}
     }}
     """
         
@@ -1943,7 +778,14 @@ class HypothesisEvaluationExpert:
                     'overall_score': overall_score,
                     'strengths': evaluation.get('strengths', ['체계적 분석', 'Activity Cliff 고려']),
                     'weaknesses': evaluation.get('weaknesses', ['개선 여지 있음']),
-                    'evaluation_rationale': evaluation.get('evaluation_rationale', '평가_항목.md 기준으로 분석됨')
+                    'evaluation_rationale': evaluation.get('evaluation_rationale', 'Activity Cliff 구조 활성 차이 원인 분석력 기준으로 평가됨'),
+                    'utilization_plan': evaluation.get('utilization_plan', {
+                        'role': '구조 분석 보완',
+                        'utilization_level': '핵심 부분 활용',
+                        'core_utilization_parts': ['구조적 차이 분석', '분자적 메커니즘'],
+                        'complementary_parts': ['추가 화학적 통찰'],
+                        'contribution_to_final': 'Activity Cliff 구조 활성 차이 원인 분석에 구조적 관점 기여'
+                    })
                 }
                 
         except Exception:
@@ -1958,53 +800,201 @@ class HypothesisEvaluationExpert:
                 'target_keywords': 75
             },
             'overall_score': 75,  # 가중평균: 75*0.4 + 75*0.4 + 75*0.2 = 75
-            'strengths': ['전문가 분석 수행', 'Activity Cliff 데이터 고려'],
+            'strengths': ['구조 활성 차이 원인 분석 수행', 'Activity Cliff 데이터 고려'],
             'weaknesses': ['추가 검증 필요'],
-            'evaluation_rationale': '평가_항목.md 기준으로 기본 평가 수행됨'
+            'evaluation_rationale': 'Activity Cliff 구조 활성 차이 원인 분석력 기준으로 평가됨',
+            'utilization_plan': {
+                'role': '전문 분야 분석 기여',
+                'utilization_level': '핵심 부분 활용',
+                'core_utilization_parts': ['전문가 관점 분석', '구조적 통찰', '메커니즘 설명'],
+                'complementary_parts': ['추가적 화학적 해석'],
+                'contribution_to_final': 'Activity Cliff 구조 활성 차이 원인 분석에 전문 분야별 관점으로 기여'
+            }
         }
     
     def evaluate_hypotheses(self, domain_hypotheses: List[Dict], shared_context: Dict) -> Dict:
-        """모든 가설을 종합 평가하고 최종 리포트 생성"""
+        """모든 가설을 종합 평가하고 최종 리포트 생성 - 평가_시스템_가이드.md 기준"""
         
-        st.info("**Phase 3: 종합 평가** - 전체 가설의 장점을 통합하여 최종 리포트를 생성합니다")
+        st.info("**Phase 3: 종합 평가** - 평가 전문 Agent가 각 가설의 구조 활성 차이 원인 분석력을 정량적으로 평가하고 최종 활용 방안을 결정합니다")
         
-        # 각 가설의 개별 강점과 약점 분석
+        # 1단계: 각 가설을 MMP/SAR/Target 기준으로 개별 평가
         individual_evaluations = []
         
         for i, hypothesis in enumerate(domain_hypotheses):
-            with st.spinner(f"{hypothesis['agent_name']} 가설 분석 중..."):
-                evaluation_prompt = self._build_individual_evaluation_prompt(hypothesis, shared_context)
-                
-                evaluation_text = self.llm_client.generate_response(
-                    system_prompt="당신은 과학적 가설 분석 전문가입니다. 각 가설의 강점과 약점을 객관적으로 분석합니다.",
-                    user_prompt=evaluation_prompt,
-                    temperature=0.3
-                )
+            with st.spinner(f"{hypothesis['agent_name']} 가설 정량적 평가 중..."):
+                # MMP/SAR/Target 기준 정량 평가
+                quantitative_evaluation = self.evaluate(hypothesis, shared_context)
                 
                 result = {
                     'hypothesis_id': i,
-                    'agent_name': hypothesis['agent_name'],
+                    'agent_name': hypothesis['agent_name'], 
                     'original_hypothesis': hypothesis,
-                    'evaluation_text': evaluation_text,
-                    'strengths': self._extract_strengths(evaluation_text),
-                    'weaknesses': self._extract_weaknesses(evaluation_text),
-                    'key_insights': self._extract_key_insights(evaluation_text),
+                    'mmp_score': quantitative_evaluation['scores']['mmp_validation'],
+                    'sar_score': quantitative_evaluation['scores']['sar_analysis'],
+                    'target_score': quantitative_evaluation['scores']['target_keywords'],
+                    'overall_score': quantitative_evaluation['overall_score'],
+                    'strengths': quantitative_evaluation['strengths'],
+                    'weaknesses': quantitative_evaluation['weaknesses'],
+                    'evaluation_rationale': quantitative_evaluation['evaluation_rationale'],
+                    'utilization_plan': quantitative_evaluation['utilization_plan'],  # 활용 계획 추가
                     'timestamp': time.time()
                 }
                 
                 individual_evaluations.append(result)
                 
-                # 개별 분석 결과 간단히 표시
-                with st.expander(f"📝 {result['agent_name']} 분석 요약", expanded=False):
-                    if result['strengths']:
-                        st.write("**주요 강점:**")
-                        for strength in result['strengths'][:2]:
-                            st.write(f"• {strength}")
+                # 개별 평가 결과 핵심 3가지 표시
+                with st.expander(f"{result['agent_name']} 평가 결과", expanded=False):
+                    
+                    # 1. 평가 점수 표시: MMP/SAR/타겟 키워드별 점수와 총점
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("MMP 점수", f"{result['mmp_score']:.0f}/100")
+                    with col2:
+                        st.metric("SAR 점수", f"{result['sar_score']:.0f}/100")
+                    with col3:
+                        st.metric("Target 점수", f"{result['target_score']:.0f}/100")
+                    with col4:
+                        st.metric("종합 점수", f"{result['overall_score']:.1f}/100")
+                    
+                    # 2. 평가 근거 표시: 각 점수를 준 구체적 이유
+                    st.write("**평가 근거:**")
+                    st.write(result['evaluation_rationale'])
+                    
+                    # 3. 활용 방식 표시: 이 가설의 어떤 부분이 최종 가설에서 어떻게 반영될지
+                    utilization = result['utilization_plan']
+                    st.write("**최종 가설에서의 활용 방식:**")
+                    st.write(f"**기여 내용**: {utilization['contribution_to_final']}")
+                    st.write(f"**활용할 핵심 부분**: {', '.join(utilization['core_utilization_parts'])}")
         
-        # 종합 리포트 생성
-        final_report = self._generate_comprehensive_report(individual_evaluations, shared_context)
+        # 2단계: 최우수 가설 선정 (강점 개수 기준) + 최종 리포트 생성
+        final_report = self._select_best_and_synthesize(individual_evaluations, shared_context)
         
         return final_report
+    
+    def _select_best_and_synthesize(self, individual_evaluations: List[Dict], shared_context: Dict) -> Dict:
+        """2단계: 강점 개수 기준으로 최우수 가설 선정 후 최종 리포트 생성"""
+        
+        # 강점 개수 기준으로 정렬 (많은 순), 동점 시 전체 점수로 결정
+        sorted_evaluations = sorted(
+            individual_evaluations, 
+            key=lambda x: (len(x['strengths']), x['overall_score']), 
+            reverse=True
+        )
+        
+        best_evaluation = sorted_evaluations[0]
+        
+        # 모든 가설의 강점을 수집
+        all_strengths = []
+        all_insights = []
+        for eval_result in individual_evaluations:
+            all_strengths.extend(eval_result['strengths'])
+            # 원본 가설에서 key_insights 추출 (있을 경우)
+            original_insights = eval_result['original_hypothesis'].get('key_insights', [])
+            all_insights.extend(original_insights)
+        
+        # 최종 종합 리포트 생성 - 평가 중 결정된 활용 방식 기반
+        synthesis_prompt = f"""
+        다음은 3명의 전문가가 생성한 Activity Cliff 구조 활성 차이 원인 가설들과 평가 전문 Agent가 결정한 활용 방식입니다.
+        각 가설의 결정된 활용 방식에 따라 최종 종합 리포트를 작성해주세요.
+
+        **최우수 가설 (주요 베이스):**
+        - 전문가: {best_evaluation['agent_name']}
+        - 강점 {len(best_evaluation['strengths'])}개: {', '.join(best_evaluation['strengths'])}
+        - 종합 점수: {best_evaluation['overall_score']:.1f}점
+        - 활용 방식: {best_evaluation['utilization_plan']['contribution_to_final']}
+        - 핵심 활용 부분: {', '.join(best_evaluation['utilization_plan']['core_utilization_parts'])}
+        - 가설 내용: {best_evaluation['original_hypothesis']['hypothesis'][:500]}...
+
+        **다른 가설들의 결정된 활용 방식:**
+        """
+        
+        for eval_result in sorted_evaluations[1:]:
+            utilization = eval_result['utilization_plan']
+            synthesis_prompt += f"""
+        - {eval_result['agent_name']} ({utilization['role']}):
+          * 활용 부분: {', '.join(utilization['core_utilization_parts'])}
+          * 보완 부분: {', '.join(utilization['complementary_parts']) if utilization['complementary_parts'] else '없음'}
+          * 기여 방식: {utilization['contribution_to_final']}
+        """
+
+        synthesis_prompt += f"""
+        
+        **Activity Cliff 구조 활성 차이 정보:**
+        - 타겟: {shared_context.get('target_name', '알 수 없음')}
+        - 문헌 근거: {shared_context.get('literature_context', {}).get('title', '관련 문헌 없음')[:100]}
+
+        **통합 원칙:**
+        1. **주요 가설을 핵심 베이스**로 사용하되, 다른 가설들의 우수한 요소들을 체계적으로 통합
+        2. **구체적이고 혁신적인 내용만** 포함하세요. 다음과 같은 진부한 내용은 **절대 포함 금지**:
+           - 뻔한 결론: "실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다"
+           - 일반적 평가: "높은 신뢰도를 가집니다", "이론적 예측을 검증해야 합니다"
+           - 구체성 없는 방법론 언급: 단순한 "도킹 시뮬레이션", "ADMET 예측" 나열
+        3. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
+        4. 각 분석의 고유한 통찰을 통합하되, **전문가 Agent 이름은 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
+           - 금지: "구조화학 전문가에 따르면", "QSAR 전문가 분석", "생체분자 상호작용 전문가의 결과" 등
+
+        **작성 형식:**
+        ## 최종 가설 제안
+        **주요 베이스: 채택된 핵심 분석**
+        
+        **1. 구조적 차이점 분석**
+        [채택된 주요 가설의 구조 분석을 핵심 베이스로 하되, 다른 가설들의 우수한 보완 관점들을 체계적으로 통합하여 완성도 높은 종합 분석을 제시]
+        
+        **2. 작용 기전 가설**
+        [생물학적 메커니즘에 대한 구체적이고 근거 있는 설명]
+        
+        **3. 실험적 근거 및 검증**
+        [기존 실험 데이터나 문헌에서 이 가설을 직접적으로 뒷받침하는 구체적 증거만 제시 - 뻔한 검증 방법론 언급 금지]
+        
+        **4. 분자 설계 제안**
+        [혁신적이고 구체적인 구조 변경 전략만 제시 - 일반적인 최적화 방향 설명 금지]
+        [제안 화합물들의 완성된 SMILES 코드 3-5개 포함 - 각각 명확한 설계 근거 제시]
+        
+        **5. 핵심 통찰**
+        [이 분석에서만 얻을 수 있는 독창적 통찰과 발견사항 - 일반적인 신뢰도/한계점 평가 금지]
+        
+        ### 추가 고려 가설
+        
+        **대안적 접근법:**
+        [보조 가설 1의 독창적 관점과 핵심 통찰을 구체적으로 2-3문장 요약 - 주요 가설과 차별화되는 접근 방식과 근거 포함]
+        
+        **보완적 관점:**
+        [보조 가설 2의 추가적 시각과 보완 요소를 구체적으로 2-3문장 요약 - 전체적 분석의 완성도를 높이는 요소들 포함]
+        
+        **중요 금지사항**: 
+        - 당연하고 뻔한 내용 금지 ("실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다")
+        - 일반적인 신뢰도 평가 금지 ("높은 신뢰도를 가집니다", "이론적 예측을 검증")
+        - 구체적 제안 없는 방법론 언급 금지 ("도킹 시뮬레이션", "ADMET 예측" 등을 단순 나열)
+        **필수 요구사항**: 혁신적 통찰, 구체적 메커니즘, 독창적 발견사항, 구체적 실험 제안만 포함하세요.
+        
+        **SMILES 코드 요구사항**: 분자 설계 제안에서 반드시 다음을 포함하세요:
+        - 제안 화합물 1: [설명] - SMILES: [완성된 SMILES 코드]
+        - 제안 화합물 2: [설명] - SMILES: [완성된 SMILES 코드]  
+        - 제안 화합물 3: [설명] - SMILES: [완성된 SMILES 코드]
+        (필요시 최대 5개까지)
+        """
+        
+        final_hypothesis = self.llm_client.generate_response(
+            system_prompt="당신은 Activity Cliff 구조 활성 차이 원인 분석 종합 전문가입니다. 여러 전문가의 의견을 통합하여 최고 품질의 종합 리포트를 작성합니다.",
+            user_prompt=synthesis_prompt,
+            temperature=0.2
+        )
+        
+        return {
+            'final_hypothesis': final_hypothesis,
+            'individual_evaluations': individual_evaluations,
+            'best_evaluation': best_evaluation,
+            'synthesis_metadata': {
+                'best_hypothesis_agent': best_evaluation['agent_name'],
+                'best_hypothesis_strengths': len(best_evaluation['strengths']),
+                'best_hypothesis_score': best_evaluation['overall_score'],
+                'total_strengths_considered': len(all_strengths),
+                'total_insights_integrated': len(all_insights),
+                'synthesis_timestamp': time.time(),
+                'selection_criteria': 'strengths_count_first',
+                'utilization_based_synthesis': True  # 활용 방식 기반 통합 표시
+            }
+        }
     
     def _build_individual_evaluation_prompt(self, hypothesis: Dict, shared_context: Dict) -> str:
         """개별 가설 분석용 프롬프트 구성"""
@@ -2047,7 +1037,7 @@ class HypothesisEvaluationExpert:
         synthesis_prompt = f"""
         **최종 종합 리포트 작성 요청:**
         
-        다음은 3명의 전문가가 제시한 가설들입니다:
+        다음은 분석을 통해 도출된 가설들입니다:
         1. **주요 가설 (채택됨)**: {best_evaluation['original_hypothesis']['hypothesis'][:500]}...
         2. **보조 가설 1**: {remaining_evaluations[0]['original_hypothesis']['hypothesis'][:200]}...
         3. **보조 가설 2**: {remaining_evaluations[1]['original_hypothesis']['hypothesis'][:200]}...
@@ -2065,10 +1055,11 @@ class HypothesisEvaluationExpert:
            - 일반적 평가: "높은 신뢰도를 가집니다", "이론적 예측을 검증해야 합니다"
            - 구체성 없는 방법론 언급: 단순한 "도킹 시뮬레이션", "ADMET 예측" 나열
         3. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
-        4. 각 분석의 고유한 관점과 전문성을 존중하되, 전문가 이름은 명시하지 말고 통합된 결과로 제시하세요
+        4. 각 분석의 고유한 통찰을 통합하되, **전문가 Agent 이름은 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
+           - 금지: "구조화학 전문가에 따르면", "QSAR 전문가 분석", "생체분자 상호작용 전문가의 결과" 등
         
         **작성 형식:**
-        ### 최종 가설 제안
+        ## 최종 가설 제안
         **주요 베이스: 채택된 핵심 분석**
         
         **1. 구조적 차이점 분석**
@@ -2213,9 +1204,6 @@ def display_expert_result(result: Dict):
                 st.write(f"• {insight}")
 
 
-# 기존 복잡한 display_final_results 함수는 display_simplified_results로 대체됨
-
-
 # 메인 온라인 토론 시스템 함수
 def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key: str, llm_provider: str = "OpenAI") -> Dict:
     """단순화된 Co-Scientist 방법론 기반 가설 생성 시스템"""
@@ -2288,14 +1276,6 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     display_simplified_results(final_report)
     
     return final_report
-
-
-# 기존 함수 - HypothesisEvaluationExpert 클래스로 대체됨
-def evaluate_hypothesis_quality(hypothesis: Dict, shared_context: Dict, api_key: str) -> Dict:
-    """DEPRECATED: HypothesisEvaluationExpert 클래스를 사용하세요"""
-    # 호환성을 위해 새 클래스로 리다이렉트
-    evaluator = HypothesisEvaluationExpert(api_key)
-    return evaluator.evaluate(hypothesis, shared_context)
 
 
 def display_simplified_results(final_report: Dict):
@@ -2418,7 +1398,6 @@ def generation_phase(shared_context: Dict, llm_client: UnifiedLLMClient) -> List
                 'agent_type': 'error',
                 'agent_name': f"❌ {expert.__class__.__name__}",
                 'hypothesis': f"가설 생성 중 오류 발생: {str(e)}",
-                'confidence': 0.5,
                 'key_insights': ['오류 발생'],
                 'reasoning_steps': ['오류로 인한 중단'],
                 'timestamp': time.time()
@@ -2434,111 +1413,111 @@ def display_docking_results(docking_analysis: dict, agent_name: str):
     if not docking_analysis:
         return
     
-    st.markdown("**도킹 시뮬레이션 분석 결과**")
-    
-    # 전체 결과를 한 화면에 표시
-    if 'high_active_docking' in docking_analysis and 'low_active_docking' in docking_analysis:
-        high_result = docking_analysis['high_active_docking']
-        low_result = docking_analysis['low_active_docking']
+    # 도킹 결과를 토글(expander) 안에 넣기
+    with st.expander("도킹 시뮬레이션 분석 결과 (상세 보기)", expanded=False):
         
-        # 1. 결합 친화도 및 Ki 값 비교 (작은 폰트로)
-        st.markdown("**1) 결합 친화도 분석**")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.write("고활성 화합물")
-            st.write(f"• 결합 친화도: {high_result['binding_affinity']:.1f} kcal/mol")
-            st.write(f"• Ki 추정값: {high_result['ki_estimate']:.0f} nM")
-        
-        with col2:
-            st.write("저활성 화합물")  
-            st.write(f"• 결합 친화도: {low_result['binding_affinity']:.1f} kcal/mol")
-            st.write(f"• Ki 추정값: {low_result['ki_estimate']:.0f} nM")
-        
-        # 2. 비교 분석 결과
-        if 'comparative_analysis' in docking_analysis:
-            comp_analysis = docking_analysis['comparative_analysis']
+        # 전체 결과를 한 화면에 표시
+        if 'high_active_docking' in docking_analysis and 'low_active_docking' in docking_analysis:
+            high_result = docking_analysis['high_active_docking']
+            low_result = docking_analysis['low_active_docking']
             
-            with col3:
-                st.write("친화도 차이")
+            # 1. 결합 친화도 및 Ki 값 비교 (작은 폰트로)
+            st.markdown("**1) 결합 친화도 분석**")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.write("고활성 화합물")
+                st.write(f"• 결합 친화도: {high_result['binding_affinity']:.1f} kcal/mol")
+                st.write(f"• Ki 추정값: {high_result['ki_estimate']:.0f} nM")
+            
+            with col2:
+                st.write("저활성 화합물")  
+                st.write(f"• 결합 친화도: {low_result['binding_affinity']:.1f} kcal/mol")
+                st.write(f"• Ki 추정값: {low_result['ki_estimate']:.0f} nM")
+            
+            # 2. 비교 분석 결과
+            if 'comparative_analysis' in docking_analysis:
+                comp_analysis = docking_analysis['comparative_analysis']
+                
+                with col3:
+                    st.write("친화도 차이")
+                    diff_value = comp_analysis['affinity_difference']
+                    st.write(f"• 차이: {abs(diff_value):.1f} kcal/mol")
+                    st.write(f"• 방향: {'고활성 > 저활성' if diff_value < 0 else '저활성 > 고활성'}")
+                
+                with col4:
+                    st.write("예측 정확도")
+                    supports_cliff = comp_analysis.get('supports_activity_cliff', False)
+                    activity_ratio = comp_analysis.get('predicted_activity_ratio', 1)
+                    st.write(f"• 활성비: {activity_ratio:.1f}배")
+                    st.write(f"• 실험 일치: {'예' if supports_cliff else '아니오'}")
+            
+            # 3. 분자간 상호작용 분석
+            st.markdown("**2) 단백질-리간드 상호작용**")
+            
+            interaction_names = {
+                'hydrogen_bonds': '수소결합',
+                'hydrophobic': '소수성 상호작용',
+                'pi_stacking': 'π-π 적층',
+                'electrostatic': '정전기 상호작용'
+            }
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("고활성 화합물 상호작용:")
+                if high_result.get('interactions'):
+                    for interaction_type, residues in high_result['interactions'].items():
+                        if residues:
+                            interaction_name = interaction_names.get(interaction_type, interaction_type)
+                            residue_text = ', '.join(residues[:3])
+                            if len(residues) > 3:
+                                residue_text += f" 외 {len(residues)-3}개"
+                            st.write(f"• {interaction_name}: {residue_text}")
+                else:
+                    st.write("• 상호작용 데이터 없음")
+            
+            with col2:
+                st.write("저활성 화합물 상호작용:")
+                if low_result.get('interactions'):
+                    for interaction_type, residues in low_result['interactions'].items():
+                        if residues:
+                            interaction_name = interaction_names.get(interaction_type, interaction_type)
+                            residue_text = ', '.join(residues[:3])
+                            if len(residues) > 3:
+                                residue_text += f" 외 {len(residues)-3}개"
+                            st.write(f"• {interaction_name}: {residue_text}")
+                else:
+                    st.write("• 상호작용 데이터 없음")
+            
+            # 4. 종합 해석
+            st.markdown("**3) 도킹 분석 종합 해석**")
+            
+            if 'comparative_analysis' in docking_analysis:
+                comp_analysis = docking_analysis['comparative_analysis']
                 diff_value = comp_analysis['affinity_difference']
-                st.write(f"• 차이: {abs(diff_value):.1f} kcal/mol")
-                st.write(f"• 방향: {'고활성 > 저활성' if diff_value < 0 else '저활성 > 고활성'}")
-            
-            with col4:
-                st.write("예측 정확도")
                 supports_cliff = comp_analysis.get('supports_activity_cliff', False)
-                activity_ratio = comp_analysis.get('predicted_activity_ratio', 1)
-                st.write(f"• 활성비: {activity_ratio:.1f}배")
-                st.write(f"• 실험 일치: {'예' if supports_cliff else '아니오'}")
-        
-        # 3. 분자간 상호작용 분석
-        st.markdown("**2) 단백질-리간드 상호작용**")
-        
-        interaction_names = {
-            'hydrogen_bonds': '수소결합',
-            'hydrophobic': '소수성 상호작용',
-            'pi_stacking': 'π-π 적층',
-            'electrostatic': '정전기 상호작용'
-        }
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**고활성 화합물 상호작용:**")
-            if high_result.get('interactions'):
-                for interaction_type, residues in high_result['interactions'].items():
-                    if residues:
-                        interaction_name = interaction_names.get(interaction_type, interaction_type)
-                        residue_text = ', '.join(residues[:3])
-                        if len(residues) > 3:
-                            residue_text += f" 외 {len(residues)-3}개"
-                        st.write(f"• {interaction_name}: {residue_text}")
-            else:
-                st.write("• 상호작용 데이터 없음")
-        
-        with col2:
-            st.write("**저활성 화합물 상호작용:**")
-            if low_result.get('interactions'):
-                for interaction_type, residues in low_result['interactions'].items():
-                    if residues:
-                        interaction_name = interaction_names.get(interaction_type, interaction_type)
-                        residue_text = ', '.join(residues[:3])
-                        if len(residues) > 3:
-                            residue_text += f" 외 {len(residues)-3}개"
-                        st.write(f"• {interaction_name}: {residue_text}")
-            else:
-                st.write("• 상호작용 데이터 없음")
-        
-        # 4. 종합 해석
-        st.markdown("**3) 도킹 분석 종합 해석**")
-        
-        if 'comparative_analysis' in docking_analysis:
-            comp_analysis = docking_analysis['comparative_analysis']
-            diff_value = comp_analysis['affinity_difference']
-            supports_cliff = comp_analysis.get('supports_activity_cliff', False)
+                
+                if supports_cliff and diff_value < -1.0:
+                    interpretation = "도킹 시뮬레이션 결과가 실험적 활성 차이를 잘 설명합니다. 고활성 화합물이 타겟 단백질과 더 강한 결합을 형성하여 높은 생물학적 활성을 보이는 것으로 예측됩니다."
+                elif not supports_cliff and abs(diff_value) < 1.0:
+                    interpretation = "도킹 결과만으로는 활성 차이를 완전히 설명하기 어렵습니다. 결합 친화도 외에 단백질 동역학, 알로스테릭 효과, 또는 ADMET 특성 차이가 주요 원인일 가능성이 있습니다."
+                elif diff_value > 1.0:
+                    interpretation = "도킹 결과가 실험 데이터와 상반됩니다. 저활성 화합물이 더 강한 결합을 보이므로, 결합 후 단백질 기능 조절, 대사 안정성, 또는 세포막 투과성 등 다른 요인의 영향이 클 것으로 예상됩니다."
+                else:
+                    interpretation = "도킹 시뮬레이션 결과 해석이 불명확합니다. 추가적인 분자동역학 시뮬레이션이나 실험적 검증이 필요합니다."
+                
+                st.write(interpretation)
             
-            if supports_cliff and diff_value < -1.0:
-                interpretation = "도킹 시뮬레이션 결과가 실험적 활성 차이를 잘 설명합니다. 고활성 화합물이 타겟 단백질과 더 강한 결합을 형성하여 높은 생물학적 활성을 보이는 것으로 예측됩니다."
-            elif not supports_cliff and abs(diff_value) < 1.0:
-                interpretation = "도킹 결과만으로는 활성 차이를 완전히 설명하기 어렵습니다. 결합 친화도 외에 단백질 동역학, 알로스테릭 효과, 또는 ADMET 특성 차이가 주요 원인일 가능성이 있습니다."
-            elif diff_value > 1.0:
-                interpretation = "도킹 결과가 실험 데이터와 상반됩니다. 저활성 화합물이 더 강한 결합을 보이므로, 결합 후 단백질 기능 조절, 대사 안정성, 또는 세포막 투과성 등 다른 요인의 영향이 클 것으로 예상됩니다."
-            else:
-                interpretation = "도킹 시뮬레이션 결과 해석이 불명확합니다. 추가적인 분자동역학 시뮬레이션이나 실험적 검증이 필요합니다."
+            # 5. 추가 분석 제안
+            st.markdown("**4) 후속 분석 제안**")
+            suggestions = [
+                "분자동역학(MD) 시뮬레이션을 통한 결합 안정성 분석",
+                "자유에너지 섭동(FEP) 계산으로 정밀한 결합 친화도 예측",
+                "단백질-리간드 복합체의 결합 모드 상세 분석",
+                "ADMET 예측을 통한 약동학적 특성 비교"
+            ]
             
-            st.write(interpretation)
-        
-        # 5. 추가 분석 제안
-        st.markdown("**4) 후속 분석 제안**")
-        suggestions = [
-            "분자동역학(MD) 시뮬레이션을 통한 결합 안정성 분석",
-            "자유에너지 섭동(FEP) 계산으로 정밀한 결합 친화도 예측",
-            "단백질-리간드 복합체의 결합 모드 상세 분석",
-            "ADMET 예측을 통한 약동학적 특성 비교"
-        ]
-        
-        for i, suggestion in enumerate(suggestions, 1):
-            st.write(f"{i}. {suggestion}")
+            for i, suggestion in enumerate(suggestions, 1):
+                st.write(f"{i}. {suggestion}")
     
-    st.markdown("---")

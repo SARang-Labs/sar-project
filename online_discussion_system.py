@@ -1213,7 +1213,7 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     # 통합 LLM 클라이언트 생성
     llm_client = UnifiedLLMClient(api_key, llm_provider)
     
-    st.markdown("**Co-Scientist 방법론 기반 SAR 분석**")
+    # st.markdown("**Co-Scientist 방법론 기반 SAR 분석**")
     st.markdown(f"3명의 전문가 Agent가 독립적으로 분석한 후 평가를 통해 최고 품질의 가설을 생성합니다.")
     
     # Phase 1: 데이터 준비 + RAG 통합

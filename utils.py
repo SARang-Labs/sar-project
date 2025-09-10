@@ -4,7 +4,7 @@ import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS, rdDepictor
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import rdFingerprintGenerator
+from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
 from openai import OpenAI
@@ -13,7 +13,104 @@ import xml.etree.ElementTree as ET
 import joblib
 import json
 import os
-from urllib.parse import quote 
+from urllib.parse import quote
+import itertools
+from patent_etl_pipeline.database import SessionLocal, Patent, SAR_Analysis, AI_Hypothesis
+
+# --- 결과 저장 함수 ---
+def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider, context_info=None):
+    """
+    [SQLAlchemy] 분석 결과(cliff)와 AI 가설을 데이터베이스에 저장합니다.
+    """
+    db = SessionLocal()
+    try:
+        # patent_number를 이용해 patent_id를 찾습니다.
+        patent = db.query(Patent).filter(Patent.patent_number == patent_number).first()
+        if not patent:
+            print(f"오류: DB에서 특허 '{patent_number}'를 찾을 수 없습니다.")
+            return None
+
+        # 1. sar_analyses 테이블에 분석 결과 저장
+        # ID 값을 정수로 변환 (문자열인 경우 해시 또는 기본값 사용)
+        def safe_int_id(id_value):
+            if isinstance(id_value, (int, float)):
+                return int(id_value)
+            elif isinstance(id_value, str):
+                try:
+                    return int(id_value)
+                except ValueError:
+                    # 문자열 ID인 경우 해시값 사용 (또는 0으로 기본값)
+                    return abs(hash(id_value)) % 1000000
+            return 0
+        
+        new_analysis = SAR_Analysis(
+            patent_id=patent.patent_id,
+            compound_id_1=safe_int_id(cliff_data['mol_1'].get('ID')),
+            compound_id_2=safe_int_id(cliff_data['mol_2'].get('ID')),
+            similarity=cliff_data.get('similarity'),
+            activity_difference=cliff_data.get('activity_diff'),
+            score=cliff_data.get('score')
+        )
+        db.add(new_analysis)
+        db.flush() # DB에 임시 반영하여 analysis_id를 얻음
+
+        # 2. ai_hypotheses 테이블에 가설 저장
+        if hypothesis_text:
+            context_text = json.dumps(context_info, ensure_ascii=False) if context_info else None
+            new_hypothesis = AI_Hypothesis(
+                analysis_id=new_analysis.analysis_id,
+                agent_name=llm_provider,
+                hypothesis_text=hypothesis_text,
+                context_info=context_text
+            )
+            db.add(new_hypothesis)
+
+        db.commit() # 모든 변경사항을 DB에 최종 저장
+        return new_analysis.analysis_id
+    except Exception as e:
+        print(f"DB 저장 중 오류 발생: {e}")
+        db.rollback()
+        return None
+    finally:
+        db.close()
+
+# --- 데이터 조회 함수 ---
+def get_analysis_history():
+    """
+    [SQLAlchemy] SAR 분석 및 AI 가설 전체 이력을 데이터베이스에서 가져옵니다.
+    """
+    db = SessionLocal()
+    try:
+        # SQLAlchemy ORM을 사용하여 JOIN 쿼리 작성
+        query = db.query(
+                    Patent.patent_number,
+                    SAR_Analysis.analysis_id,
+                    SAR_Analysis.analysis_timestamp,
+                    SAR_Analysis.compound_id_1,
+                    SAR_Analysis.compound_id_2,
+                    SAR_Analysis.similarity,
+                    SAR_Analysis.activity_difference,
+                    SAR_Analysis.score,
+                    AI_Hypothesis.hypothesis_text,
+                    AI_Hypothesis.agent_name.label("agent_name")
+                ).join(SAR_Analysis, Patent.patent_id == SAR_Analysis.patent_id)\
+                 .outerjoin(AI_Hypothesis, SAR_Analysis.analysis_id == AI_Hypothesis.analysis_id)\
+                 .order_by(Patent.patent_number, SAR_Analysis.analysis_timestamp.desc()).statement
+        
+        df = pd.read_sql_query(query, db.bind)
+        
+        # Arrow 변환 문제를 방지하기 위해 ID 컬럼들을 정수형으로 확실히 변환
+        if not df.empty:
+            for col in ['compound_id_1', 'compound_id_2']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        
+        return df
+    except Exception as e:
+        st.error(f"분석 이력 로딩 중 오류 발생: {e}")
+        return pd.DataFrame()
+    finally:
+        db.close()
 
 
 # --- Helper Functions ---
@@ -61,7 +158,7 @@ def get_structural_difference_keyword(smiles1, smiles2):
     except Exception:
         pass
     
-    # 간단한 작용기 이름으로 변환 (예시)
+    # 간단한 작용기 이름으로 변환
     if fragments:
         # 가장 흔한 작용기 이름 몇 개만 간단히 매핑
         common_names = {
@@ -183,59 +280,43 @@ def get_activity_cliff_summary(cliff_data, activity_col=None):
     return summary
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
-@st.cache_data
-def load_data(uploaded_file):
-    """CSV 파일을 로드하고, pKi와 pIC50 컬럼을 지능적으로 통합하여 데이터를 전처리합니다."""
+def load_data(df_from_db):
+    """
+    데이터베이스에서 로드된 데이터프레임을 받아 후처리를 수행합니다.
+    'Target'을 포함한 모든 컬럼을 유지합니다.
+    """
     try:
-        df = pd.read_csv(uploaded_file)
+        df = df_from_db.copy()
 
-        # --- 컬럼 이름 확인 방식 통일 ---
+        # 1. pKi, pIC50 컬럼을 찾아 'pKi'로 통합 (pKi 우선)
+        if "pIC50" in df.columns and "pKi" not in df.columns:
+            df.rename(columns={"pIC50": "pKi"}, inplace=True)
+        elif "pIC50" in df.columns and "pKi" in df.columns:
+            df['pKi'] = df['pKi'].fillna(df['pIC50'])
         
-        # 1. 유연한 방식으로 pKi 및 pIC50 관련 컬럼 이름들을 먼저 찾습니다.
-        pki_cols = [col for col in df.columns if 'pKi' in col]
-        pic50_cols = [col for col in df.columns if 'pIC50' in col]
-
-        # 2. 찾은 컬럼 이름을 기준으로 pKi 데이터를 보정/생성합니다.
-        if pki_cols and pic50_cols:
-            pki_col_name = pki_cols[0]
-            pic50_col_name = pic50_cols[0]
-            
-            df[pki_col_name] = pd.to_numeric(df[pki_col_name], errors='coerce')
-            df[pic50_col_name] = pd.to_numeric(df[pic50_col_name], errors='coerce')
-            
-            df[pki_col_name].replace(0, np.nan, inplace=True)
-            df[pki_col_name].fillna(df[pic50_col_name], inplace=True)
-            
-            # 기준이 되는 pKi 컬럼 이름을 'pKi'로 통일합니다.
-            if pki_col_name != 'pKi':
-                df.rename(columns={pki_col_name: 'pKi'}, inplace=True)
-            st.info("Info: 'pKi'와 'pIC50' 값을 지능적으로 병합했습니다.")
-
-        elif not pki_cols and pic50_cols:
-            pic50_col_name = pic50_cols[0]
-            # pIC50 컬럼을 'pKi'라는 이름으로 생성합니다.
-            df['pKi'] = df[pic50_col_name]
-            st.info(f"Info: '{pic50_col_name}' 컬럼을 'pKi'로 변환했습니다.")
-
+        # 2. 필수 컬럼(SMILES) 존재 여부 확인
         if 'SMILES' not in df.columns:
-            st.error("오류: CSV 파일에 'SMILES' 컬럼이 반드시 포함되어야 합니다.")
+            st.error("오류: 데이터에 'SMILES' 컬럼이 없습니다.")
             return None, []
-        if 'ID' not in df.columns:
-            df.insert(0, 'ID', [f"Mol_{i+1}" for i in range(len(df))])
-            st.info("Info: 'ID' 컬럼이 없어 자동으로 생성되었습니다.")
-        
-        activity_cols = sorted([col for col in df.columns if 'pKi' in col or 'pIC50' in col], reverse=True)
-        if not activity_cols:
-            st.error("오류: CSV 파일에 'pKi' 또는 'pIC50'을 포함하는 활성 데이터 컬럼이 없습니다.")
-            return None, []
-            
-        df['SMILES'] = df['SMILES'].apply(canonicalize_smiles)
+
+        # 3. SMILES 표준화 및 유효하지 않은 데이터 제거
+        initial_rows = len(df)
+        df['SMILES'] = df['SMILES'].apply(lambda s: Chem.MolToSmiles(Chem.MolFromSmiles(s)) if Chem.MolFromSmiles(s) else None)
         df.dropna(subset=['SMILES'], inplace=True)
-        for col in activity_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        invalid_smiles_count = initial_rows - len(df)
+        if invalid_smiles_count > 0:
+            st.warning(f"경고: {invalid_smiles_count}개의 유효하지 않은 SMILES 데이터가 제외되었습니다.")
+
+        # 4. 분석 가능한 활성 컬럼 목록 반환
+        activity_cols = [col for col in ["pKi", "pIC50"] if col in df.columns and pd.to_numeric(df[col], errors='coerce').notna().any()]
+        if not activity_cols:
+            st.warning("경고: 분석 가능한 숫자형 활성 데이터(pKi 또는 pIC50)가 없습니다.")
+
         return df, activity_cols
+
     except Exception as e:
-        st.error(f"데이터 로딩 중 오류 발생: {e}")
+        st.error(f"데이터 후처리 중 오류 발생: {e}")
         return None, []
 
 # --- Phase 2: 핵심 패턴 자동 추출 ---
@@ -271,19 +352,19 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
                     mol1_info['canonical_smiles'] = canonicalize_smiles(mol1_info['SMILES'])
                     mol2_info['canonical_smiles'] = canonicalize_smiles(mol2_info['SMILES'])
                     
-                    # 구조적 차이 키워드 추가 (안전한 처리)
+                    # 구조적 차이 키워드 추가
                     try:
                         structural_diff = get_structural_difference_keyword(mol1_info['SMILES'], mol2_info['SMILES'])
                     except:
                         structural_diff = "구조적 차이 분석 불가"
                     
-                    # 입체이성질체 여부 확인 (안전한 처리)
+                    # 입체이성질체 여부 확인
                     try:
                         is_stereoisomer = check_stereoisomers(mol1_info['SMILES'], mol2_info['SMILES'])
                     except:
                         is_stereoisomer = False
                     
-                    # 분자 특성 계산 (안전한 처리)
+                    # 분자 특성 계산
                     mol1_props = calculate_molecular_properties(df['mol'].iloc[i])
                     mol2_props = calculate_molecular_properties(df['mol'].iloc[j])
                     
@@ -306,6 +387,41 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
     
     cliffs.sort(key=lambda x: x['score'], reverse=True)
     return cliffs
+
+def find_quantitative_pairs(df, similarity_threshold, activity_col):
+    """
+    구조적으로 유사하지만 활성 분류(Activity)가 다른 화합물 쌍을 찾습니다.
+    """
+    df_quant = df.dropna(subset=['SMILES', 'Activity', activity_col]).copy()
+    
+    # RDKit 객체 및 지문 생성
+    df_quant['mol'] = df_quant['SMILES'].apply(Chem.MolFromSmiles)
+    df_quant.dropna(subset=['mol'], inplace=True)
+    fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    df_quant['fp'] = [fpgenerator.GetFingerprint(m) for m in df_quant['mol']]
+    df_quant.reset_index(inplace=True, drop=True)
+
+    pairs = []
+    # 모든 쌍을 비교하여 조건에 맞는 쌍을 찾습니다.
+    for i in range(len(df_quant)):
+        for j in range(i + 1, len(df_quant)):
+            sim = DataStructs.TanimotoSimilarity(df_quant.iloc[i]['fp'], df_quant.iloc[j]['fp'])
+            if sim >= similarity_threshold and df_quant.iloc[i]['Activity'] != df_quant.iloc[j]['Activity']:
+                pairs.append({'mol1_index': i, 'mol2_index': j, 'similarity': sim})
+
+    # 활성 분류 차이 점수 계산 및 정렬
+    activity_map = {'Highly Active': 4, 'Moderately Active': 3, 'Weakly Active': 2, 'Inactive': 1}
+    for pair in pairs:
+        activity1 = df_quant.iloc[pair['mol1_index']]['Activity']
+        activity2 = df_quant.iloc[pair['mol2_index']]['Activity']
+        score1 = activity_map.get(activity1, 0)
+        score2 = activity_map.get(activity2, 0)
+        pair['activity_category_diff'] = abs(score1 - score2)
+    
+    pairs.sort(key=lambda x: x.get('activity_category_diff', 0), reverse=True)
+    
+    # 나중에 UI에서 원본 데이터를 참조할 수 있도록 처리된 데이터프레임도 함께 반환
+    return pairs, df_quant
 
 # --- Phase 3: LLM 기반 해석 및 가설 생성 (RAG 적용) ---
 

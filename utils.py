@@ -246,15 +246,15 @@ def get_activity_cliff_summary(cliff_data, activity_col=None):
         activity_display_key = activity_col if activity_col else 'Activity'
         activity_display_value = compound_info.get(activity_display_key)
         
-        # 'pki' 키: 데이터에 'pKi' 컬럼이 있으면 그 숫자 값을, 없으면 0.0을 사용
-        pki_numeric_value = compound_info.get('pKi')
-        pki_value = pki_numeric_value if isinstance(pki_numeric_value, (int, float)) else 0.0
+        # 'pic50' 키: 데이터에 'pIC50' 컬럼이 있으면 그 숫자 값을, 없으면 0.0을 사용
+        pic50_numeric_value = compound_info.get('pIC50')
+        pic50_value = pic50_numeric_value if isinstance(pic50_numeric_value, (int, float)) else 0.0
         
         return {
             'id': compound_info.get('ID'),
             'smiles': compound_info.get('SMILES'),
             'activity': activity_display_value,
-            'pki': pki_value,
+            'pic50': pic50_value,
             'properties': props
         }
 
@@ -288,11 +288,12 @@ def load_data(df_from_db):
     try:
         df = df_from_db.copy()
 
-        # 1. pKi, pIC50 컬럼을 찾아 'pKi'로 통합 (pKi 우선)
-        if "pIC50" in df.columns and "pKi" not in df.columns:
-            df.rename(columns={"pIC50": "pKi"}, inplace=True)
-        elif "pIC50" in df.columns and "pKi" in df.columns:
-            df['pKi'] = df['pKi'].fillna(df['pIC50'])
+        # 1. pIC50, pKi 컬럼을 찾아 'pIC50'로 통합 (pIC50 우선)
+        if "pKi" in df.columns and "pIC50" not in df.columns:
+            df.rename(columns={"pKi": "pIC50"}, inplace=True)
+        elif "pKi" in df.columns and "pIC50" in df.columns:
+            df['pIC50'] = df['pIC50'].fillna(df['pKi'])
+            df.drop(columns=['pKi'], inplace=True)
         
         # 2. 필수 컬럼(SMILES) 존재 여부 확인
         if 'SMILES' not in df.columns:
@@ -309,9 +310,9 @@ def load_data(df_from_db):
             st.warning(f"경고: {invalid_smiles_count}개의 유효하지 않은 SMILES 데이터가 제외되었습니다.")
 
         # 4. 분석 가능한 활성 컬럼 목록 반환
-        activity_cols = [col for col in ["pKi", "pIC50"] if col in df.columns and pd.to_numeric(df[col], errors='coerce').notna().any()]
+        activity_cols = [col for col in ["pIC50", "pKi"] if col in df.columns and pd.to_numeric(df[col], errors='coerce').notna().any()]
         if not activity_cols:
-            st.warning("경고: 분석 가능한 숫자형 활성 데이터(pKi 또는 pIC50)가 없습니다.")
+            st.warning("경고: 분석 가능한 숫자형 활성 데이터(pIC50 또는 pKi)가 없습니다.")
 
         return df, activity_cols
 
@@ -321,7 +322,7 @@ def load_data(df_from_db):
 
 # --- Phase 2: 핵심 패턴 자동 추출 ---
 @st.cache_data
-def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, activity_col='pKi'):
+def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, activity_col='pIC50'):
     """DataFrame에서 Activity Cliff 쌍을 찾고 스코어를 계산하여 정렬합니다."""
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
     
@@ -461,7 +462,7 @@ def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
     return fetch_articles(f'("{target_name}"[Title/Abstract]) AND ("structure activity relationship"[Title/Abstract])')
 
 
-def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activity_col='pKi'):
+def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activity_col='pIC50'):
     if not api_key:
         return "사이드바에 API 키를 입력해주세요.", None
 
@@ -501,7 +502,7 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     - **화합물 A (낮은 활성):**
       - ID: {low_active['id']}
       - 표준 SMILES: {low_active['smiles']}
-      - 활성도 (pKi): {low_active['pki']}
+      - 활성도 (pIC50): {low_active['pki']}
       - 분자량: {low_active['properties']['molecular_weight']:.2f} Da
       - LogP: {low_active['properties']['logp']:.2f}
       - TPSA: {low_active['properties']['tpsa']:.2f} Ų
@@ -509,14 +510,14 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     - **화합물 B (높은 활성):**
       - ID: {high_active['id']}
       - 표준 SMILES: {high_active['smiles']}
-      - 활성도 (pKi): {high_active['pki']}
+      - 활성도 (pIC50): {high_active['pki']}
       - 분자량: {high_active['properties']['molecular_weight']:.2f} Da
       - LogP: {high_active['properties']['logp']:.2f}
       - TPSA: {high_active['properties']['tpsa']:.2f} Ų
     
     **Activity Cliff 메트릭:**
     - Tanimoto 유사도: {metrics['similarity']:.3f}
-    - 활성도 차이 (ΔpKi): {metrics['activity_difference']}
+    - 활성도 차이 (ΔpIC50): {metrics['activity_difference']}
     - Cliff 점수: {metrics['cliff_score']:.3f}
     
     {props_info}

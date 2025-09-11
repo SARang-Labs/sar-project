@@ -171,7 +171,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
 def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
     if 'Activity' not in df.columns or not available_activity_cols:
-        st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pKi/pIC50)이 없습니다.")
+        st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pIC50/pKi)이 없습니다.")
         return
     ref_activity_col = available_activity_cols[0]
 
@@ -264,7 +264,7 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
 def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
     st.info("구조가 유사하지만 **선택된 활성 값의 차이가 큰** 쌍(Activity Cliff)을 탐색합니다.")
     if not available_activity_cols:
-        st.error("오류: 분석 가능한 활성 컬럼(pKi/pIC50)이 없습니다.")
+        st.error("오류: 분석 가능한 활성 컬럼(pIC50/pKi)이 없습니다.")
         return
     selected_col = st.selectbox("분석 기준 컬럼 선택:", options=available_activity_cols, key=f'col_{tab_key}')
     with st.expander("현재 데이터 활성도 분포 보기"):
@@ -498,9 +498,9 @@ def main():
 
                     st.sidebar.success(f"총 {len(df_from_db)}개 행 중 {len(df)}개의 고유 화합물 로드 완료!")
 
-                    # 4. Activity 컬럼이 없는 경우, pKi/pIC50 기준으로 자동 생성합니다.
-                    if 'Activity' not in df.columns and any(col in df.columns for col in ['pKi', 'pIC50']):
-                        ref_col_act = 'pKi' if 'pKi' in df.columns else 'pIC50'
+                    # 4. Activity 컬럼이 없는 경우, pIC50/pKi 기준으로 자동 생성합니다.
+                    if 'Activity' not in df.columns and any(col in df.columns for col in ['pIC50', 'pKi']):
+                        ref_col_act = 'pIC50' if 'pIC50' in df.columns else 'pKi'
                         conditions = [
                             (df[ref_col_act] > 7.0),
                             (df[ref_col_act] > 5.7) & (df[ref_col_act] <= 7.0),
@@ -509,7 +509,7 @@ def main():
                         ]
                         labels = ['Highly Active', 'Moderately Active', 'Weakly Active', 'Inactive']
                         df['Activity'] = np.select(conditions, labels, default='Unclassified')
-                        st.info("Info: pKi/pIC50 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
+                        st.info("Info: pIC50/pKi 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
 
         # 최종 처리된 데이터(df)가 있을 경우에만 분석 UI를 렌더링합니다.
         if df is not None:

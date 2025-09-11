@@ -64,12 +64,12 @@ ANTI_HALLUCINATION_GUIDELINES = """
    - 존재하지 않는 QSAR 모델이나 예측 모델 결과 생성 금지
 
 2. **금지된 정량적 예측:**
-   - 구체적 pKi, Ki, IC50 예측값 생성 금지 ("예측 pKi: 7.2" 등)
+   - 구체적 pIC50, Ki, IC50 예측값 생성 금지 ("예측 pIC50: 7.2" 등)
    - 구체적 결합 친화도 수치 예측 금지 ("ΔG = -8.5 kcal/mol" 등)
    - 구체적 선택성 비율 예측 금지 ("100배 향상된 선택성" 등)
 
 3. **허용된 정성적 분석:**
-   - 제공된 실제 데이터(SMILES, pKi, 물성)만을 근거로 한 해석
+   - 제공된 실제 데이터(SMILES, pIC50, 물성)만을 근거로 한 해석
    - 문헌 기반 메커니즘 추론과 화학적 논리 제시
    - 구조적 차이와 활성 변화의 연관성 해석
 
@@ -135,12 +135,12 @@ class StructuralChemistryExpert:
         **Few-Shot 예시 - 전문가 분석 과정 참조:**
         
         [예시] 벤조디아제핀 유도체 Activity Cliff 분석:
-        구조 A: 클로르디아제폭시드 (pKi: 7.2) vs 구조 B: 디아제팜 (pKi: 8.9)
+        구조 A: 클로르디아제폭시드 (pIC50: 7.2) vs 구조 B: 디아제팜 (pIC50: 8.9)
         
         1. 구조 비교: A는 N-옥사이드 형태, B는 7번 위치에 염소 치환
         2. 물리화학적 영향: N-옥사이드 제거로 전자밀도 증가, 지용성 향상 (LogP +0.8)
         3. 생체 상호작용: GABA 수용체와의 결합 기하학 개선, π-π 스택킹 강화
-        4. 활성 변화 연결: 개선된 단백질 적합성으로 1.7 pKi 단위 활성 증가
+        4. 활성 변화 연결: 개선된 단백질 적합성으로 1.7 pIC50 단위 활성 증가
         5. 추가 실험: 분자 도킹 시뮬레이션으로 결합 모드 확인, ADMET 예측
         
         [귀하의 분석 과제]
@@ -154,9 +154,9 @@ class StructuralChemistryExpert:
         **Activity Cliff 분석 대상:**
         
         **화합물 정보:**
-        - 고활성 화합물: {high_active['id']} (pKi: {high_active['pki']})
+        - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
           SMILES: {high_active['smiles']}
-        - 저활성 화합물: {low_active['id']} (pKi: {low_active['pki']})
+        - 저활성 화합물: {low_active['id']} (pIC50: {low_active['pic50']})
           SMILES: {low_active['smiles']}
         
         **In-Context 구조적 특성 (할루시네이션 방지용):**
@@ -179,7 +179,7 @@ class StructuralChemistryExpert:
         
         3. **생체 상호작용 가설**: 이 변경이 표적 단백질 결합 친화도나 대사 안정성에 어떻게 작용할지 구체적인 분자 수준 메커니즘을 가설로 제시하세요.
         
-        4. **활성 변화 연결**: 이 가설이 관찰된 Activity Cliff ({metrics['activity_difference']} pKi 단위 차이)를 어떻게 설명하는지 논리적으로 연결하세요.
+        4. **활성 변화 연결**: 이 가설이 관찰된 Activity Cliff ({metrics['activity_difference']} pIC50 단위 차이)를 어떻게 설명하는지 논리적으로 연결하세요.
         
         5. **추가 실험 제안**: 검증을 위한 분자 도킹, ADMET 예측, 계산화학 실험 등 후속 실험을 구체적으로 제안하세요.
         
@@ -208,12 +208,12 @@ class StructuralChemistryExpert:
         4. 활성 변화 연결: [정량적 구조-활성 관계 설명]
         5. 추가 실험 제안: [구체적 프로토콜과 예상 결과]
         
-        분자 설계 제안: [후속 화합물의 구체적 구조 변경 전략 - pKi 예측값 언급 금지]
+        분자 설계 제안: [후속 화합물의 구체적 구조 변경 전략 - pIC50 예측값 언급 금지]
         
         {ANTI_HALLUCINATION_GUIDELINES}
-        - 제공된 실제 데이터(SMILES, pKi, 물성)만을 근거로 정성적 해석
+        - 제공된 실제 데이터(SMILES, pIC50, 물성)만을 근거로 정성적 해석
         
-        **중요: 전문가가 알고 있을 뻔한 기본 내용은 피하고, 실질적이고 깊이 있는 구조생물학적 통찰을 제공하세요. 구체적 수치, 특정 분자 부위, 명확한 메커니즘을 포함하되 예상 pKi 값은 언급하지 마세요.**
+        **중요: 전문가가 알고 있을 뻔한 기본 내용은 피하고, 실질적이고 깊이 있는 구조생물학적 통찰을 제공하세요. 구체적 수치, 특정 분자 부위, 명확한 메커니즘을 포함하되 예상 pIC50 값은 언급하지 마세요.**
         """
     
     
@@ -356,12 +356,12 @@ class BiomolecularInteractionExpert:
         **Few-Shot 예시 - 전문가 분석 과정 참조:**
         
         [예시] EGFR 키나제 억제제 Activity Cliff 분석:
-        화합물 A: 게피티니브 (pKi: 7.8) vs 화합물 B: 엘로티니브 (pKi: 8.5)
+        화합물 A: 게피티니브 (pIC50: 7.8) vs 화합물 B: 엘로티니브 (pIC50: 8.5)
         
         1. 단백질-리간드 결합: 퀴나졸린 코어의 6,7위치 치환기 차이가 ATP 결합 포켓과의 상호작용 패턴 변화
         2. 상호작용 패턴: 엘로티니브의 아세틸렌 링커가 Cys797과 새로운 소수성 접촉 형성
         3. 결합 기하학: 추가 아로마틱 고리가 DFG 루프와의 π-π 스택킹 개선
-        4. 약리학적 메커니즘: 향상된 결합 기하학으로 0.7 pKi 단위 친화도 증가
+        4. 약리학적 메커니즘: 향상된 결합 기하학으로 0.7 pIC50 단위 친화도 증가
         5. ADMET 영향: CYP3A4 대사 안정성 개선, 반감기 연장
         
         [귀하의 분석 과제]
@@ -377,13 +377,13 @@ class BiomolecularInteractionExpert:
         **타겟 단백질:** {target_name}
         
         **화합물 정보:**
-        - 고활성 화합물: {high_active['id']} (pKi: {high_active['pki']})
+        - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
           SMILES: {high_active['smiles']}
-        - 저활성 화합물: {low_active['id']} (pKi: {low_active['pki']})
+        - 저활성 화합물: {low_active['id']} (pIC50: {low_active['pic50']})
           SMILES: {low_active['smiles']}
         
         **In-Context 생화학적 특성 (할루시네이션 방지용):**
-        - 활성도 차이: {metrics['activity_difference']} pKi 단위
+        - 활성도 차이: {metrics['activity_difference']} pIC50 단위
         - 구조 유사도: {metrics['similarity']:.3f} (Tanimoto)
         - 분자량 차이: {prop_diffs['mw_diff']:.2f} Da
         - LogP 차이: {prop_diffs['logp_diff']:.2f}
@@ -432,12 +432,12 @@ class BiomolecularInteractionExpert:
         4. 약리학적 메커니즘: [결합 기전 해석, 선택성 차이 원인 분석]
         5. ADMET 영향: [대사 패턴 차이, 약동학적 특성 변화 해석]
         
-        분자 설계 제안: [특정 치환기 도입 전략 - pKi 예측값 언급 금지]
+        분자 설계 제안: [특정 치환기 도입 전략 - pIC50 예측값 언급 금지]
         
         {ANTI_HALLUCINATION_GUIDELINES}
         - 제공된 실제 데이터만을 근거로 정성적 메커니즘 해석
 
-        **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 패턴, 상호작용 유형, 특정 아미노산 잔기와의 관계를 포함한 정성적 분석을 제시하되 예상 pKi 값은 언급하지 마세요.**
+        **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 패턴, 상호작용 유형, 특정 아미노산 잔기와의 관계를 포함한 정성적 분석을 제시하되 예상 pIC50 값은 언급하지 마세요.**
         """
     
     def _format_docking_results(self, docking_results: Dict) -> str:
@@ -506,7 +506,7 @@ class QSARExpert:
     def __init__(self, llm_client: UnifiedLLMClient):
         self.llm_client = llm_client
         self.persona = """당신은 구조-활성 관계(SAR) 분석의 세계적 전문가입니다.
-        제공된 실제 데이터(SMILES, pKi, 물리화학적 특성)를 바탕으로 분자 특성 변화와 활성 차이 간의 
+        제공된 실제 데이터(SMILES, pIC50, 물리화학적 특성)를 바탕으로 분자 특성 변화와 활성 차이 간의 
         정성적 관계를 분석하고, 문헌 근거와 화학적 지식을 토대로 구조-활성 관계 패턴을 해석하는 것이 전문입니다.
         
         **중요**: 실제 계산하지 않은 QSAR 모델, 회귀방정식, 통계값(R², RMSE 등)을 절대 생성하지 마세요."""
@@ -551,9 +551,9 @@ class QSARExpert:
         **Few-Shot 예시 - 전문가 분석 과정 참조:**
         
         [예시] ACE 억제제 계열 Activity Cliff 활성 차이 원인 분석:
-        시리즈: 캅토프릴 → 에날라프릴 (pKi: 6.5 → 8.2)
+        시리즈: 캅토프릴 → 에날라프릴 (pIC50: 6.5 → 8.2)
         
-        1. 활성 차이 패턴: 티올기 → 카르복실기 변경으로 1.7 pKi 단위 활성 증가
+        1. 활성 차이 패턴: 티올기 → 카르복실기 변경으로 1.7 pIC50 단위 활성 증가
         2. 화학정보학 인사이트: 낮은 Tanimoto 유사도(0.4)에도 큰 활성 차이는 약물발견의 전환점
         3. 신약 개발 전략: 프로드러그 전략 도입으로 ADMET 특성 개선
         4. 최적화 방향: 아연 결합 모티프 최적화가 핵심, 주변 치환기는 선택성 조절
@@ -572,15 +572,15 @@ class QSARExpert:
         **타겟 단백질:** {target_name}
         
         **화합물 정보:**
-        - 고활성: {high_active['id']} (pKi: {high_active['pki']})
+        - 고활성: {high_active['id']} (pIC50: {high_active['pic50']})
           SMILES: {high_active['smiles']}
-        - 저활성: {low_active['id']} (pKi: {low_active['pki']})
+        - 저활성: {low_active['id']} (pIC50: {low_active['pic50']})
           SMILES: {low_active['smiles']}
         
         **In-Context Activity Cliff 메트릭 (할루시네이션 방지용):**
         - Cliff 점수: {metrics.get('cliff_score', 0):.3f}
         - 구조 유사도: {metrics['similarity']:.3f} (Tanimoto)
-        - 활성 차이: {metrics['activity_difference']} pKi 단위
+        - 활성 차이: {metrics['activity_difference']} pIC50 단위
         - 같은 스캐폴드: {metrics.get('same_scaffold', 'Unknown')}
         - 구조적 차이: {metrics['structural_difference_type']}
         
@@ -595,7 +595,7 @@ class QSARExpert:
         구조-활성 관계 전문가로서 제공된 실제 데이터만을 바탕으로 다음 4단계로 분석하세요:
         
         1. **실제 분자 특성 비교**: 제공된 물리화학적 특성 차이(분자량: {prop_diffs['mw_diff']:.2f} Da, LogP: {prop_diffs['logp_diff']:.2f}, TPSA: {prop_diffs.get('tpsa_diff', 0):.2f} Ų)와 SMILES 구조 차이를 분석하세요. 
-           어떤 특성 변화가 {metrics['activity_difference']} pKi 차이와 관련될 수 있는지 해석하세요.
+           어떤 특성 변화가 {metrics['activity_difference']} pIC50 차이와 관련될 수 있는지 해석하세요.
         
         2. **구조-특성 관계 해석**: 두 화합물의 구조적 차이가 물리화학적 특성에 미치는 영향을 분석하세요. 
            지용성, 극성, 분자 크기 변화가 활성에 어떻게 기여할 수 있는지 설명하세요.
@@ -611,7 +611,7 @@ class QSARExpert:
         **전문가 수준의 Activity Cliff 활성 차이 원인 분석을 제공하되, 실제 존재하지 않는 데이터는 절대 생성하지 마세요.**
         
         **정성적 Activity Cliff 활성 차이 원인 분석에 집중하세요:**
-        - 제공된 실제 데이터(SMILES, pKi, 물성)만을 근거로 분석
+        - 제공된 실제 데이터(SMILES, pIC50, 물성)만을 근거로 분석
         - 구조 변화와 활성 차이 간의 화학적 논리 제시
         - 문헌 정보를 바탕으로 한 메커니즘 해석
         - 가짜 통계값이나 모델 결과는 절대 생성 금지
@@ -695,8 +695,8 @@ class HypothesisEvaluationExpert:
             cliff_info = f"""
     **Activity Cliff 분석 대상:**
     - 타겟: {target_name}
-    - 고활성 화합물: {high_comp.get('id', 'N/A')} (pKi: {high_comp.get('pki', 'N/A')})
-    - 저활성 화합물: {low_comp.get('id', 'N/A')} (pKi: {low_comp.get('pki', 'N/A')})
+    - 고활성 화합물: {high_comp.get('id', 'N/A')} (pIC50: {high_comp.get('pki', 'N/A')})
+    - 저활성 화합물: {low_comp.get('id', 'N/A')} (pIC50: {low_comp.get('pki', 'N/A')})
     - 활성도 차이: {metrics.get('activity_difference', 'N/A')}
     - 구조 유사도: {metrics.get('structural_similarity', 'N/A')}"""
         
@@ -722,11 +722,11 @@ class HypothesisEvaluationExpert:
     {literature_info}
     
     **평가 기준 (가중치 적용):**
-    1. **MMP 재검증 (40%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pKi/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
+    1. **MMP 재검증 (40%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pIC50/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
     2. **SAR 분석 (40%)**: 구조 변화 → 메커니즘 → 활성 변화의 논리가 타당한지, 제시한 메커니즘이 화학적으로 합리적인지, 구체적 분석인지 평가  
     3. **타겟 키워드 (20%)**: {target_name} 타겟 특이적 언급, kinase domain/binding site 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
     
-    **핵심 질문**: 구조적으로 유사한 두 화합물이 {metrics.get('activity_difference', 'N/A')} pKi 차이를 보이는 구조 활성 차이의 원인은 무엇인가?
+    **핵심 질문**: 구조적으로 유사한 두 화합물이 {metrics.get('activity_difference', 'N/A')} pIC50 차이를 보이는 구조 활성 차이의 원인은 무엇인가?
     
     **결과를 JSON 형식으로 제공:**
     {{
@@ -1223,8 +1223,8 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     # 컨텍스트 정보 표시
     with st.expander("분석 대상 정보", expanded=False):
         cliff_summary = shared_context['cliff_summary']
-        st.write(f"**고활성 화합물:** {cliff_summary['high_activity_compound']['id']} (pKi: {cliff_summary['high_activity_compound']['pki']})")
-        st.write(f"**저활성 화합물:** {cliff_summary['low_activity_compound']['id']} (pKi: {cliff_summary['low_activity_compound']['pki']})")
+        st.write(f"**고활성 화합물:** {cliff_summary['high_activity_compound']['id']} (pIC50: {cliff_summary['high_activity_compound']['pic50']})")
+        st.write(f"**저활성 화합물:** {cliff_summary['low_activity_compound']['id']} (pIC50: {cliff_summary['low_activity_compound']['pic50']})")
         st.write(f"**활성도 차이:** {cliff_summary['cliff_metrics']['activity_difference']}")
     
     # RAG 문헌 검색 결과 표시

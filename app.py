@@ -60,7 +60,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
     header = f"쌍 #{idx+1} (ID: {mol1.get('ID', 'N/A')} vs {mol2.get('ID', 'N/A')}) | 유사도: {similarity:.3f}"
     
     with st.expander(header, expanded=True):
-        real_act_diff = cliff_data['activity_diff']
+        real_act_diff = cliff_data['activity_difference']
         structural_diff = cliff_data['structural_difference']
         is_stereoisomer = cliff_data['is_stereoisomer']
         mol1_props = cliff_data['mol1_properties']
@@ -202,7 +202,7 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                 mol2 = df_quant_valid.iloc[p['mol2_index']]
                 quantitative_plot_data.append({
                     'similarity': p['similarity'],
-                    'activity_diff': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
+                    'activity_difference': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
                     'pair_label': f"{mol1.get('ID', 'N/A')} vs {mol2.get('ID', 'N/A')}",
                     'score': p.get('activity_category_diff', 0)
                 })
@@ -213,18 +213,18 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                 fig_quant_scatter = px.scatter(
                     plot_df_quant,
                     x='similarity',
-                    y='activity_diff', 
+                    y='activity_difference', 
                     title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
-                    labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_diff': f'활성도 차이 (Δ{ref_activity_col})'}, 
+                    labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_difference': f'활성도 차이 (Δ{ref_activity_col})'}, 
                     hover_data=['pair_label', 'score'],
                     color='score',
                     color_continuous_scale=px.colors.sequential.Viridis,
-                    size='activity_diff' 
+                    size='activity_difference' 
                 )
                 fig_quant_scatter.add_shape(
                     type="rect", xref="x", yref="y",
                     x0=sim_thresh, y0=0, x1=1.0, 
-                    y1=plot_df_quant['activity_diff'].max() * 1.1,
+                    y1=plot_df_quant['activity_difference'].max() * 1.1,
                     line=dict(color="Red", width=2, dash="dash"),
                     fillcolor="rgba(255,0,0,0.1)"
                 )
@@ -247,7 +247,7 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                     'mol_1': mol1.to_dict(),
                     'mol_2': mol2.to_dict(),
                     'similarity': pair_info['similarity'],
-                    'activity_diff': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
+                    'activity_difference': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
                     'structural_difference': get_structural_difference_keyword(mol1['SMILES'], mol2['SMILES']),
                     'is_stereoisomer': check_stereoisomers(mol1['SMILES'], mol2['SMILES']),
                     'mol1_properties': calculate_molecular_properties(mol1['mol']),
@@ -303,7 +303,7 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 x='similarity',
                 y='activity_diff', 
                 title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
-                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_diff': f'활성도 차이 (Δ{analyzed_col})'}, 
+                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_difference': f'활성도 차이 (Δ{analyzed_col})'}, 
                 hover_data=['pair_label', 'score'],
                 color='score',
                 color_continuous_scale=px.colors.sequential.Viridis,
@@ -312,7 +312,7 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
             fig_scatter.add_shape(
                 type="rect", xref="x", yref="y",
                 x0=sim_thresh, y0=act_diff_thresh, x1=1.0, 
-                y1=plot_df_scatter['activity_diff'].max() * 1.1, # <<< 여기를 수정
+                y1=plot_df_scatter['activity_difference'].max() * 1.1, # <<< 여기를 수정
                 line=dict(color="Red", width=2, dash="dash"),
                 fillcolor="rgba(255,0,0,0.1)"
             )
@@ -324,7 +324,7 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
             st.markdown("#### 상세 분석 목록")
             pair_options = [
                 f"{idx+1}. {c['mol_1'].get('ID', 'N/A')} vs {c['mol_2'].get('ID', 'N/A')} "
-                f"(유사도: {c['similarity']:.2f}, 활성차이: {c['activity_diff']:.2f})"
+                f"(유사도: {c['similarity']:.2f}, 활성차이: {c['activity_difference']:.2f})"
                 for idx, c in enumerate(cliffs)
             ]
             selected_pair_str = st.selectbox("분석할 쌍을 선택하세요:", pair_options, key=f"pair_select_{tab_key}")

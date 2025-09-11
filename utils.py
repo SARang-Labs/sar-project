@@ -373,7 +373,7 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
                         'mol_1': mol1_info, 
                         'mol_2': mol2_info, 
                         'similarity': sim, 
-                        'activity_diff': act_diff, 
+                        'activity_difference': act_diff,
                         'score': score,
                         'structural_difference': structural_diff,
                         'is_stereoisomer': is_stereoisomer,

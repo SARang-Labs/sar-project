@@ -1224,7 +1224,9 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     with st.expander("분석 대상 정보", expanded=False):
         cliff_summary = shared_context['cliff_summary']
         st.write(f"**고활성 화합물:** {cliff_summary['high_activity_compound']['id']} (pIC50: {cliff_summary['high_activity_compound']['pic50']})")
+        st.code(cliff_summary['high_activity_compound']['smiles'], language=None)
         st.write(f"**저활성 화합물:** {cliff_summary['low_activity_compound']['id']} (pIC50: {cliff_summary['low_activity_compound']['pic50']})")
+        st.code(cliff_summary['low_activity_compound']['smiles'], language=None)
         st.write(f"**활성도 차이:** {cliff_summary['cliff_metrics']['activity_difference']}")
     
     # RAG 문헌 검색 결과 표시

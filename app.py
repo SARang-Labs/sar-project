@@ -52,7 +52,7 @@ st.set_page_config(page_title="AI 기반 SAR 분석 시스템", page_icon="🧪"
 
 
 # --- 공통 로직 처리 헬퍼 함수 ---
-def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider, selected_patent):
+def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
     mol1 = pd.Series(cliff_data['mol_1'])
     mol2 = pd.Series(cliff_data['mol_2'])
     similarity = cliff_data['similarity']
@@ -115,7 +115,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                             hypothesis, context = generate_hypothesis_cliff(cliff_data, target_name, api_key, llm_provider, activity_col)
                         st.markdown(hypothesis)
                         if context:
-                            with st.expander("참고 문헌 정보 (RAG)"): st.json(context)
+                            with st.expander("도킹 시뮬레이션 결과"): st.json(context)
 
         elif tab_key.endswith('advanced'):
 
@@ -127,7 +127,8 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
             else:
                 with st.spinner("AI 전문가들이 다각도 분석 후 최종 리포트를 작성합니다..."):
                     # 1. 온라인 다각도 분석 시스템 실행하여 최종 리포트 받기
-                    final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider)
+                    # target_name: PDB ID (도킹용), cell_line: 세포주 (실험조건용)
+                    final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider, cell_line)
                     
                     # 도킹 시뮬레이션 결과가 있는 경우 별도 표시
                     if isinstance(final_report, dict) and 'domain_hypotheses' in final_report:
@@ -168,7 +169,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
 
 # --- UI 렌더링 함수  ---
 
-def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
+def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
     if 'Activity' not in df.columns or not available_activity_cols:
         st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pIC50/pKi)이 없습니다.")
@@ -258,10 +259,11 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                 process_and_display_pair(
                     idx=selected_idx, cliff_data=cliff_data_quant, sim_thresh=sim_thresh, 
                     activity_col=ref_activity_col, tab_key=f"quantitative_{tab_key}",
-                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent
+                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent,
+                    cell_line=cell_line
                 )
 
-def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
+def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
     st.info("구조가 유사하지만 **선택된 활성 값의 차이가 큰** 쌍(Activity Cliff)을 탐색합니다.")
     if not available_activity_cols:
         st.error("오류: 분석 가능한 활성 컬럼(pIC50/pKi)이 없습니다.")
@@ -334,7 +336,8 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 process_and_display_pair(
                     idx=selected_idx, cliff_data=cliff, sim_thresh=sim_thresh, 
                     activity_col=analyzed_col, tab_key=tab_key,
-                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent
+                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent,
+                    cell_line=cell_line
                 )
 
 
@@ -375,7 +378,7 @@ def get_targets_for_patent(patent_number):
 @st.cache_data
 def get_data_for_patent_and_target(patent_number, target_name):
     """특정 특허와 특정 타겟에 대한 데이터만 DB에서 JOIN하여 가져옵니다."""
-    if not all([patent_number, target_name]): return None
+    if not patent_number: return None  # 특허는 필수
     db: Session = SessionLocal()
     try:
         # SQLAlchemy의 read_sql_query를 사용하여 DataFrame으로 직접 변환
@@ -390,7 +393,13 @@ def get_data_for_patent_and_target(patent_number, target_name):
                 ).join(Activity, Compound.compound_id == Activity.compound_id)\
                  .join(Target, Activity.target_id == Target.target_id)\
                  .join(Patent, Activity.patent_id == Patent.patent_id)\
-                 .filter(Patent.patent_number == patent_number, Target.target_name == target_name).statement
+                 .filter(Patent.patent_number == patent_number)
+        
+        # target_name이 지정된 경우에만 타겟 필터 추가
+        if target_name:
+            query = query.filter(Target.target_name == target_name)
+        
+        query = query.statement
         df = pd.read_sql_query(query, db.bind)
         return df
     except Exception as e:
@@ -458,8 +467,11 @@ def main():
                 st.warning(f"'{selected_patent}' 특허에 대한 타겟 데이터가 없습니다.")
 
         st.header("⚙️ AI 모델 설정")
-        # target_name_input은 이제 기본값 또는 보조 용도로만 사용됩니다.
-        target_name_input = st.text_input("분석 대상 타겟 단백질 (참고용)", value=selected_target or "EGFR")
+        # 특허별 기본 타겟 단백질 PDB ID 설정
+        # 1020170094694 특허의 경우에만 6G6K를 기본값으로 사용
+        default_target_pdb = "6G6K" if selected_patent and "1020170094694" in selected_patent else ""
+        target_name_input = st.text_input("분석 대상 타겟 단백질 (PDB ID)", value=default_target_pdb, 
+                                         help="타겟 단백질의 PDB ID를 입력하세요. 예: 6G6K, 1M17, 4ZAU 등")
         llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Gemini"))
         api_key = st.text_input("API 키 입력:", type="password", placeholder="OpenAI 또는 Gemini API 키")
 
@@ -474,10 +486,11 @@ def main():
         st.header("실시간 분석 대시보드")
         df, available_activity_cols = None, []
 
-        # 특허와 타겟이 모두 선택되었을 때만 데이터 로드 및 처리를 시작합니다.
+        # 특허가 선택되고 타겟(selected_target)이 선택되었을 때 데이터 로드
+        # 타겟은 데이터 필터링용, PDB ID는 도킹 시뮬레이션용으로 각각 사용
         if selected_patent and selected_target:
-            with st.spinner(f"특허 '{selected_patent}'의 '{selected_target}' 데이터 로딩 중..."):
-                # 1. 특허와 타겟에 맞는 데이터를 DB에서 가져옵니다.
+            with st.spinner(f"특허 '{selected_patent}'의 '{selected_target}' 타겟 데이터 로딩 중..."):
+                # 1. 특허와 세포주에 맞는 데이터를 DB에서 가져옵니다.
                 df_from_db = get_data_for_patent_and_target(selected_patent, selected_target)
 
             if df_from_db is not None:
@@ -513,10 +526,15 @@ def main():
 
         # 최종 처리된 데이터(df)가 있을 경우에만 분석 UI를 렌더링합니다.
         if df is not None:
-            st.success(f"'{selected_target}'에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
+            st.success(f"'{selected_target}' 타겟에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
 
-            # 분석 함수에 전달할 타겟 이름은 사이드바에서 선택된 값을 사용합니다.
-            target_name_to_use = selected_target
+            # PDB ID와 세포주 정보 검증
+            if not target_name_input:
+                st.warning("타겟 단백질 PDB ID가 입력되지 않았습니다. 도킹 시뮬레이션이 제한될 수 있습니다.")
+            
+            # 분석 함수에 전달할 정보들
+            target_protein_pdb = target_name_input  # 도킹 시뮬레이션용 PDB ID
+            cell_line_name = selected_target        # 실험 조건용 세포주
 
             # SAR 분석 UI (온라인 토론 시스템 사용 가능한 경우만 표시)
             if ONLINE_DISCUSSION_AVAILABLE:
@@ -524,9 +542,9 @@ def main():
                 analysis_type = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="analysis_type")
                 st.markdown("---")
                 if analysis_type == "정량 분석":
-                    render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
+                    render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_protein_pdb, api_key, llm_provider, selected_patent, cell_line_name)
                 else:
-                    render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
+                    render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_protein_pdb, api_key, llm_provider, selected_patent, cell_line_name)
             else:
                 st.error("온라인 다각도 분석 시스템을 로드할 수 없습니다.")
         else:

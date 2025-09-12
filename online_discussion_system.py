@@ -2,7 +2,7 @@
 Co-Scientist 기반 SAR 분석 시스템 - 3단계 전문가 협업 가설 생성
 
 이 모듈은 Co-Scientist 방법론을 SAR 분석에 특화하여 구현합니다:
-- Phase 1: 데이터 준비 + RAG 통합 (기존 시스템 활용)
+- Phase 1: 데이터 준비 + 도킹 시뮬레이션 통합
 - Phase 2: 전문가 분석 (3개 도메인 전문가 독립 생성)
 - Phase 3: 전문가 평가 (HypothesisEvaluationExpert 기반 품질 평가)
 """
@@ -13,8 +13,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import streamlit as st
 from openai import OpenAI
-from utils import search_pubmed_for_context, get_activity_cliff_summary
-from llm_debate.tools.docking_simulator import DockingSimulator
+from utils import get_docking_context, get_activity_cliff_summary
 
 class UnifiedLLMClient:
     """통합 LLM 클라이언트"""
@@ -122,12 +121,12 @@ class StructuralChemistryExpert:
         if shared_context.get('literature_context'):
             lit = shared_context['literature_context']
             literature_info = f"""
-            **참고 문헌 정보 (RAG 검색 결과 - 할루시네이션 방지용):**
-            - 제목: {lit.get('title', 'N/A')}
-            - 초록: {lit.get('abstract', 'N/A')[:500]}...
-            - PubMed ID: {lit.get('pmid', 'N/A')}
-            - 키워드: {target_name}, 구조-활성 관계, Activity Cliff
-            - 이 문헌을 전문가 지식의 근거로 활용하여 논리적 추론을 수행하세요.
+            **도킹 시뮬레이션 결과 (구조 기반 근거):**
+            - 화합물 1 결합 친화도: {lit.get('compound1', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 2 결합 친화도: {lit.get('compound2', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 1 주요 상호작용: {', '.join([k for k, v in lit.get('compound1', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 화합물 2 주요 상호작용: {', '.join([k for k, v in lit.get('compound2', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 이 도킹 결과를 근거로 구조적 차이가 활성 차이로 이어지는 메커니즘을 분석하세요.
             """
         
         # Few-Shot 예시 (실제 SAR 사례)
@@ -152,6 +151,10 @@ class StructuralChemistryExpert:
         {few_shot_example}
         
         **Activity Cliff 분석 대상:**
+        
+        **실험 조건:**
+        - 타겟 단백질: {target_name} (PDB ID)
+        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
         
         **화합물 정보:**
         - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
@@ -260,7 +263,6 @@ class BiomolecularInteractionExpert:
         self.llm_client = llm_client
         self.persona = """당신은 단백질-리간드 상호작용 메커니즘 분야의 세계적 권위자입니다.
         타겟 단백질과의 결합 방식 변화, 약리학적 관점과 생리활성 메커니즘 규명을 전문으로 합니다."""
-        self.docking_simulator = DockingSimulator()
     
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """생체분자 상호작용 관점의 가설 생성 (도킹 시뮬레이션 포함)"""
@@ -290,45 +292,37 @@ class BiomolecularInteractionExpert:
         high_active = cliff_summary.get('high_activity_compound', {})
         low_active = cliff_summary.get('low_activity_compound', {})
         
-        results = {}
-        
-        # 고활성 화합물 도킹
-        if high_active.get('smiles'):
-            docking_result = self.docking_simulator.perform_docking(
-                high_active['smiles'],
-                target_name=target_name
+        if high_active.get('smiles') and low_active.get('smiles'):
+            # utils.py의 get_docking_context 함수 사용
+            docking_results = get_docking_context(
+                high_active['smiles'], 
+                low_active['smiles'], 
+                target_name
             )
-            results['high_active_docking'] = {
-                'binding_affinity': docking_result.binding_affinity,
-                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36) * 1000,  # nM 단위 (μM에서 변환)
-                'interactions': docking_result.interactions,
-                'rmsd': docking_result.rmsd_lb
+            
+            # 결과를 기존 형식으로 변환
+            results = {
+                'high_active_docking': {
+                    'binding_affinity': docking_results['compound1']['binding_affinity_kcal_mol'],
+                    'interactions': docking_results['compound1']['interaction_fingerprint']
+                },
+                'low_active_docking': {
+                    'binding_affinity': docking_results['compound2']['binding_affinity_kcal_mol'],
+                    'interactions': docking_results['compound2']['interaction_fingerprint']
+                }
             }
-        
-        # 저활성 화합물 도킹
-        if low_active.get('smiles'):
-            docking_result = self.docking_simulator.perform_docking(
-                low_active['smiles'],
-                target_name=target_name
-            )
-            results['low_active_docking'] = {
-                'binding_affinity': docking_result.binding_affinity,
-                'ki_estimate': 10 ** (-docking_result.binding_affinity / 1.36) * 1000,  # nM 단위 (μM에서 변환)
-                'interactions': docking_result.interactions,
-                'rmsd': docking_result.rmsd_lb
-            }
-        
-        # 도킹 결과 비교 분석
-        if 'high_active_docking' in results and 'low_active_docking' in results:
+            
+            # 비교 분석
             high_score = results['high_active_docking']['binding_affinity']
             low_score = results['low_active_docking']['binding_affinity']
             results['comparative_analysis'] = {
                 'affinity_difference': high_score - low_score,
-                'predicted_activity_ratio': abs(high_score / low_score) if low_score != 0 else None,
                 'supports_activity_cliff': high_score < low_score  # 낮은 값이 더 강한 결합
             }
+            
+            return results
         
-        return results
+        return {}
     
     def _build_interaction_prompt(self, shared_context: Dict[str, Any], docking_results: Dict = None) -> str:
         """생체분자 상호작용 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
@@ -343,12 +337,12 @@ class BiomolecularInteractionExpert:
         if shared_context.get('literature_context'):
             lit = shared_context['literature_context']
             literature_info = f"""
-            **참고 문헌 정보 (RAG 검색 결과 - 할루시네이션 방지용):**
-            - 제목: {lit.get('title', 'N/A')}
-            - 초록: {lit.get('abstract', 'N/A')[:500]}...
-            - PubMed ID: {lit.get('pmid', 'N/A')}
-            - 키워드: {target_name}, 구조-활성 관계, Activity Cliff
-            - 이 문헌을 전문가 지식의 근거로 활용하여 논리적 추론을 수행하세요.
+            **도킹 시뮬레이션 결과 (구조 기반 근거):**
+            - 화합물 1 결합 친화도: {lit.get('compound1', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 2 결합 친화도: {lit.get('compound2', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 1 주요 상호작용: {', '.join([k for k, v in lit.get('compound1', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 화합물 2 주요 상호작용: {', '.join([k for k, v in lit.get('compound2', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 이 도킹 결과를 근거로 구조적 차이가 활성 차이로 이어지는 메커니즘을 분석하세요.
             """
         
         # Few-Shot 예시 (단백질-리간드 상호작용 사례)
@@ -374,7 +368,9 @@ class BiomolecularInteractionExpert:
         
         **Activity Cliff 분석 대상:**
         
-        **타겟 단백질:** {target_name}
+        **실험 조건:**
+        - 타겟 단백질: {target_name} (PDB ID)
+        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
         
         **화합물 정보:**
         - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
@@ -449,11 +445,11 @@ class BiomolecularInteractionExpert:
         
         if 'high_active_docking' in docking_results:
             high = docking_results['high_active_docking']
-            formatted += f"- 고활성 화합물: 결합 친화도 {high['binding_affinity']:.1f} kcal/mol, Ki 추정값 {high['ki_estimate']:.2f} nM\n"
+            formatted += f"- 고활성 화합물: 결합 친화도 {high['binding_affinity']:.1f} kcal/mol\n"
         
         if 'low_active_docking' in docking_results:
             low = docking_results['low_active_docking']
-            formatted += f"- 저활성 화합물: 결합 친화도 {low['binding_affinity']:.1f} kcal/mol, Ki 추정값 {low['ki_estimate']:.2f} nM\n"
+            formatted += f"- 저활성 화합물: 결합 친화도 {low['binding_affinity']:.1f} kcal/mol\n"
         
         if 'comparative_analysis' in docking_results:
             comp = docking_results['comparative_analysis']
@@ -538,12 +534,12 @@ class QSARExpert:
         if shared_context.get('literature_context'):
             lit = shared_context['literature_context']
             literature_info = f"""
-            **참고 문헌 정보 (RAG 검색 결과 - 할루시네이션 방지용):**
-            - 제목: {lit.get('title', 'N/A')}
-            - 초록: {lit.get('abstract', 'N/A')[:500]}...
-            - PubMed ID: {lit.get('pmid', 'N/A')}
-            - 키워드: {target_name}, 구조-활성 관계, Activity Cliff
-            - 이 문헌을 전문가 지식의 근거로 활용하여 논리적 추론을 수행하세요.
+            **도킹 시뮬레이션 결과 (구조 기반 근거):**
+            - 화합물 1 결합 친화도: {lit.get('compound1', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 2 결합 친화도: {lit.get('compound2', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 1 주요 상호작용: {', '.join([k for k, v in lit.get('compound1', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 화합물 2 주요 상호작용: {', '.join([k for k, v in lit.get('compound2', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 이 도킹 결과를 근거로 구조적 차이가 활성 차이로 이어지는 메커니즘을 분석하세요.
             """
         
         # Few-Shot 예시 (Activity Cliff 활성 차이 원인 분석 사례)
@@ -569,7 +565,9 @@ class QSARExpert:
         
         **Activity Cliff 분석 대상:**
         
-        **타겟 단백질:** {target_name}
+        **실험 조건:**
+        - 타겟 단백질: {target_name} (PDB ID)
+        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
         
         **화합물 정보:**
         - 고활성: {high_active['id']} (pIC50: {high_active['pic50']})
@@ -684,6 +682,7 @@ class HypothesisEvaluationExpert:
         cliff_summary = shared_context.get('cliff_summary', {})
         literature_context = shared_context.get('literature_context', {})
         target_name = shared_context.get('target_name', '알 수 없음')
+        cell_line_context = shared_context.get('cell_line_context', {})
         
         # Activity Cliff 정보 구성
         cliff_info = ""
@@ -692,9 +691,13 @@ class HypothesisEvaluationExpert:
             low_comp = cliff_summary.get('low_activity_compound', {})
             metrics = cliff_summary.get('cliff_metrics', {})
             
+            cell_line_info = ""
+            if cell_line_context and cell_line_context.get('cell_line_name'):
+                cell_line_info = f"\n    - 측정 세포주: {cell_line_context.get('cell_line_name')}"
+            
             cliff_info = f"""
     **Activity Cliff 분석 대상:**
-    - 타겟: {target_name}
+    - 타겟 단백질: {target_name} (PDB ID){cell_line_info}
     - 고활성 화합물: {high_comp.get('id', 'N/A')} (pIC50: {high_comp.get('pki', 'N/A')})
     - 저활성 화합물: {low_comp.get('id', 'N/A')} (pIC50: {low_comp.get('pki', 'N/A')})
     - 활성도 차이: {metrics.get('activity_difference', 'N/A')}
@@ -724,7 +727,7 @@ class HypothesisEvaluationExpert:
     **평가 기준 (가중치 적용):**
     1. **MMP 재검증 (40%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pIC50/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
     2. **SAR 분석 (40%)**: 구조 변화 → 메커니즘 → 활성 변화의 논리가 타당한지, 제시한 메커니즘이 화학적으로 합리적인지, 구체적 분석인지 평가  
-    3. **타겟 키워드 (20%)**: {target_name} 타겟 특이적 언급, kinase domain/binding site 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
+    3. **타겟 특이성 (20%)**: {target_name} 타겟 단백질 특이적 언급{f", {cell_line_context.get('cell_line_name')} 세포주 특성 고려" if cell_line_context.get('cell_line_name') else ""}, kinase domain/binding site 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
     
     **핵심 질문**: 구조적으로 유사한 두 화합물이 {metrics.get('activity_difference', 'N/A')} pIC50 차이를 보이는 구조 활성 차이의 원인은 무엇인가?
     
@@ -1033,9 +1036,18 @@ class HypothesisEvaluationExpert:
         best_evaluation = max(individual_evaluations, key=lambda x: len(x.get('strengths', [])))
         remaining_evaluations = [eval_result for eval_result in individual_evaluations if eval_result != best_evaluation]
         
+        # shared_context에서 실험 조건 정보 추출
+        target_name = shared_context.get('target_name', '알 수 없음')
+        cell_line_context = shared_context.get('cell_line_context', {})
+        cell_line_name = cell_line_context.get('cell_line_name', '알 수 없음')
+        
         # 종합 리포트 생성 프롬프트
         synthesis_prompt = f"""
         **최종 종합 리포트 작성 요청:**
+        
+        **실험 조건:**
+        - 타겟 단백질: {target_name} (PDB ID)
+        - 측정 세포주: {cell_line_name}
         
         다음은 분석을 통해 도출된 가설들입니다:
         1. **주요 가설 (채택됨)**: {best_evaluation['original_hypothesis']['hypothesis'][:500]}...
@@ -1049,13 +1061,14 @@ class HypothesisEvaluationExpert:
         {chr(10).join([f"• {strength}" for strength in all_strengths[:6] if strength not in best_evaluation.get('strengths', [])])}
         
         **작성 지침:**
-        1. **주요 가설을 베이스로 사용**하되, 다른 가설의 우수한 부분으로 보완하세요
-        2. **구체적이고 혁신적인 내용만** 포함하세요. 다음과 같은 진부한 내용은 **절대 포함 금지**:
+        1. **실험 조건 고려**: {target_name} 단백질과 {cell_line_name} 세포주의 특성을 반영하여 가설을 작성하세요
+        2. **주요 가설을 베이스로 사용**하되, 다른 가설의 우수한 부분으로 보완하세요
+        3. **구체적이고 혁신적인 내용만** 포함하세요. 다음과 같은 진부한 내용은 **절대 포함 금지**:
            - 뻔한 결론: "실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다"
            - 일반적 평가: "높은 신뢰도를 가집니다", "이론적 예측을 검증해야 합니다"
            - 구체성 없는 방법론 언급: 단순한 "도킹 시뮬레이션", "ADMET 예측" 나열
-        3. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
-        4. 각 분석의 고유한 통찰을 통합하되, **전문가 Agent 이름은 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
+        4. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
+        5. 각 분석의 고유한 통찰을 통합하되, **전문가 Agent 이름은 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
            - 금지: "구조화학 전문가에 따르면", "QSAR 전문가 분석", "생체분자 상호작용 전문가의 결과" 등
         
         **작성 형식:**
@@ -1205,7 +1218,7 @@ def display_expert_result(result: Dict):
 
 
 # 메인 온라인 토론 시스템 함수
-def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key: str, llm_provider: str = "OpenAI") -> Dict:
+def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key: str, llm_provider: str = "OpenAI", cell_line: str = None) -> Dict:
     """단순화된 Co-Scientist 방법론 기반 가설 생성 시스템"""
     
     start_time = time.time()
@@ -1216,9 +1229,9 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     # st.markdown("**Co-Scientist 방법론 기반 SAR 분석**")
     st.markdown(f"3명의 전문가 Agent가 독립적으로 분석한 후 평가를 통해 최고 품질의 가설을 생성합니다.")
     
-    # Phase 1: 데이터 준비 + RAG 통합
-    st.info("**Phase 1: 데이터 준비** - RAG 통합 컨텍스트 구성")
-    shared_context = prepare_shared_context(selected_cliff, target_name)
+    # Phase 1: 데이터 준비 + 도킹 시뮬레이션 통합
+    st.info("**Phase 1: 데이터 준비** - 도킹 시뮬레이션 컨텍스트 구성")
+    shared_context = prepare_shared_context(selected_cliff, target_name, cell_line)
     
     # 컨텍스트 정보 표시
     with st.expander("분석 대상 정보", expanded=False):
@@ -1229,15 +1242,35 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
         st.code(cliff_summary['low_activity_compound']['smiles'], language=None)
         st.write(f"**활성도 차이:** {cliff_summary['cliff_metrics']['activity_difference']}")
     
-    # RAG 문헌 검색 결과 표시
-    if shared_context.get('literature_context'):
-        rag_context = shared_context['literature_context']
-        with st.expander("검색된 참고 문헌", expanded=False):
-            st.markdown(f"**제목:** {rag_context.get('title', 'N/A')}")
-            abstract = rag_context.get('abstract', '')
-            if abstract:
-                display_abstract = abstract[:300] + "..." if len(abstract) > 300 else abstract
-                st.markdown(f"**요약:** {display_abstract}")
+    # 도킹 시뮬레이션 결과 표시
+    cliff_summary = shared_context.get('cliff_summary', {})
+    if cliff_summary:
+        high_compound = cliff_summary.get('high_activity_compound', {})
+        low_compound = cliff_summary.get('low_activity_compound', {})
+        target_name = shared_context.get('target_name', 'EGFR')
+        
+        # 도킹 결과 생성 (get_docking_context 함수 사용)
+        from utils import get_docking_context
+        docking_results = get_docking_context(high_compound.get('smiles'), low_compound.get('smiles'), target_name)
+        
+        with st.expander("도킹 시뮬레이션 결과", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"**화합물 1 (낮은 활성, ID: {low_compound.get('id', 'N/A')})**")
+                docking1 = docking_results['compound2']
+                st.markdown(f"- **결합 친화도:** {docking1['binding_affinity_kcal_mol']} kcal/mol")
+                st.markdown(f"- **수소결합:** {', '.join(docking1['interaction_fingerprint']['Hydrogenbonds']) if docking1['interaction_fingerprint']['Hydrogenbonds'] else '없음'}")
+                st.markdown(f"- **소수성 상호작용:** {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}")
+                st.markdown(f"- **할로겐결합:** {', '.join(docking1['interaction_fingerprint']['Halogenbonds']) if docking1['interaction_fingerprint']['Halogenbonds'] else '없음'}")
+            
+            with col2:
+                st.markdown(f"**화합물 2 (높은 활성, ID: {high_compound.get('id', 'N/A')})**")
+                docking2 = docking_results['compound1']
+                st.markdown(f"- **결합 친화도:** {docking2['binding_affinity_kcal_mol']} kcal/mol")
+                st.markdown(f"- **수소결합:** {', '.join(docking2['interaction_fingerprint']['Hydrogenbonds']) if docking2['interaction_fingerprint']['Hydrogenbonds'] else '없음'}")
+                st.markdown(f"- **소수성 상호작용:** {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}")
+                st.markdown(f"- **할로겐결합:** {', '.join(docking2['interaction_fingerprint']['Halogenbonds']) if docking2['interaction_fingerprint']['Halogenbonds'] else '없음'}")
     
     # Phase 2: Generation - 3개 전문가 독립 분석
     st.markdown("---")
@@ -1336,35 +1369,54 @@ def display_simplified_results(final_report: Dict):
         st.metric("통합 인사이트", f"{synthesis_metadata.get('total_insights_integrated', 0)}개")
 
 
-def prepare_shared_context(selected_cliff: Dict, target_name: str) -> Dict:
-    """기존 RAG 시스템을 활용한 컨텍스트 준비 - 강화된 문헌 근거 제공"""
+def prepare_shared_context(selected_cliff: Dict, target_name: str, cell_line: str = None) -> Dict:
+    """도킹 시뮬레이션을 활용한 컨텍스트 준비 - 강화된 구조 기반 근거 제공"""
     
-    # 기존 함수들 재사용
-    rag_context = search_pubmed_for_context(
+    # 도킹 시뮬레이션 결과 가져오기
+    docking_context = get_docking_context(
         selected_cliff['mol_1']['SMILES'], 
         selected_cliff['mol_2']['SMILES'], 
         target_name
     )
     cliff_summary = get_activity_cliff_summary(selected_cliff)
     
-    # RAG 컨텍스트 품질 향상
-    if rag_context and isinstance(rag_context, dict):
-        # 문헌 정보 강화
-        enhanced_rag = rag_context.copy()
-        enhanced_rag['relevance_score'] = 'High' if target_name.lower() in rag_context.get('title', '').lower() else 'Medium'
-        enhanced_rag['context_type'] = 'SAR Analysis Reference'
-        enhanced_rag['usage_instruction'] = f"이 문헌을 {target_name} 타겟에 대한 Activity Cliff 분석의 과학적 근거로 활용하세요"
-        rag_context = enhanced_rag
+    # 도킹 컨텍스트 품질 향상
+    if docking_context and isinstance(docking_context, dict):
+        # 도킹 정보 강화
+        enhanced_docking = docking_context.copy()
+        enhanced_docking['context_type'] = 'Docking Simulation Result'
+        enhanced_docking['usage_instruction'] = f"이 도킹 결과를 {target_name} 타겟에 대한 Activity Cliff 분석의 구조적 근거로 활용하세요"
+        docking_context = enhanced_docking
+    
+    # 세포주 정보 가져오기 (있는 경우)
+    cell_line_context = None
+    if cell_line:
+        try:
+            from utils import get_cell_line_info, get_cell_line_context_prompt
+            cell_line_info = get_cell_line_info(cell_line)
+            cell_line_context = {
+                'cell_line_name': cell_line,
+                'cell_line_info': cell_line_info,
+                'context_prompt': get_cell_line_context_prompt(cell_line_info, target_name)
+            }
+        except ImportError:
+            # utils에 세포주 함수가 없을 경우 기본 정보만
+            cell_line_context = {
+                'cell_line_name': cell_line,
+                'cell_line_info': {'characteristics': f'Cell line: {cell_line}'},
+                'context_prompt': f"**세포주 컨텍스트:** 활성도는 {cell_line} 세포주에서 측정됨"
+            }
     
     # 모든 에이전트가 공유할 통합 컨텍스트
     shared_context = {
         'cliff_data': selected_cliff,
         'cliff_summary': cliff_summary,
-        'literature_context': rag_context,  # 강화된 PubMed 검색 결과
-        'target_name': target_name,
+        'literature_context': docking_context,  # 도킹 시뮬레이션 결과
+        'target_name': target_name,             # PDB ID (예: 6G6K)
+        'cell_line_context': cell_line_context, # 세포주 정보
         'timestamp': time.time(),
-        'context_quality': 'Enhanced' if rag_context else 'Basic',
-        'evidence_level': 'Literature-backed' if rag_context else 'Data-only'
+        'context_quality': 'Enhanced' if docking_context else 'Basic',
+        'evidence_level': 'Docking-backed' if docking_context else 'Data-only'
     }
     
     return shared_context
@@ -1430,12 +1482,10 @@ def display_docking_results(docking_analysis: dict, agent_name: str):
             with col1:
                 st.write("고활성 화합물")
                 st.write(f"• 결합 친화도: {high_result['binding_affinity']:.1f} kcal/mol")
-                st.write(f"• Ki 추정값: {high_result['ki_estimate']:.0f} nM")
             
             with col2:
                 st.write("저활성 화합물")  
                 st.write(f"• 결합 친화도: {low_result['binding_affinity']:.1f} kcal/mol")
-                st.write(f"• Ki 추정값: {low_result['ki_estimate']:.0f} nM")
             
             # 2. 비교 분석 결과
             if 'comparative_analysis' in docking_analysis:

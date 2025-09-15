@@ -15,3 +15,4 @@ langchain-google-genai
 typing-extensions
 pydantic
 futurehouse-client
+prolif

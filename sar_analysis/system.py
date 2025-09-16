@@ -99,9 +99,6 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     # 통합 LLM 클라이언트 생성
     llm_client = UnifiedLLMClient(api_key, llm_provider)
     
-    # st.markdown("**Co-Scientist 방법론 기반 SAR 분석**")
-    st.markdown(f"3명의 전문가 Agent가 독립적으로 분석한 후 평가를 통해 최고 품질의 가설을 생성합니다.")
-    
     # Phase 1: 데이터 준비 + 도킹 시뮬레이션 통합
     st.info("**Phase 1: 데이터 준비** - 도킹 시뮬레이션 컨텍스트 구성")
     shared_context = prepare_shared_context(selected_cliff, target_name, cell_line)
@@ -126,24 +123,22 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
         from utils import get_docking_context
         docking_results = get_docking_context(high_compound.get('smiles'), low_compound.get('smiles'), target_name)
         
-        with st.expander("도킹 시뮬레이션 결과", expanded=False):
+        with st.expander("도킹 시뮬레이션 결과 - Activity Cliff 분석을 위한 단백질 결합 차이", expanded=False):
             col1, col2 = st.columns(2)
             
             with col1:
                 st.markdown(f"**화합물 1 (낮은 활성, ID: {low_compound.get('id', 'N/A')})**")
                 docking1 = docking_results['compound2']
                 st.markdown(f"- **결합 친화도:** {docking1['binding_affinity_kcal_mol']} kcal/mol")
-                st.markdown(f"- **수소결합:** {', '.join(docking1['interaction_fingerprint']['Hydrogenbonds']) if docking1['interaction_fingerprint']['Hydrogenbonds'] else '없음'}")
                 st.markdown(f"- **소수성 상호작용:** {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}")
-                st.markdown(f"- **할로겐결합:** {', '.join(docking1['interaction_fingerprint']['Halogenbonds']) if docking1['interaction_fingerprint']['Halogenbonds'] else '없음'}")
+                st.markdown(f"- **반데르발스 접촉:** {', '.join(docking1['interaction_fingerprint']['VdWContacts']) if docking1['interaction_fingerprint']['VdWContacts'] else '없음'}")
             
             with col2:
                 st.markdown(f"**화합물 2 (높은 활성, ID: {high_compound.get('id', 'N/A')})**")
                 docking2 = docking_results['compound1']
                 st.markdown(f"- **결합 친화도:** {docking2['binding_affinity_kcal_mol']} kcal/mol")
-                st.markdown(f"- **수소결합:** {', '.join(docking2['interaction_fingerprint']['Hydrogenbonds']) if docking2['interaction_fingerprint']['Hydrogenbonds'] else '없음'}")
                 st.markdown(f"- **소수성 상호작용:** {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}")
-                st.markdown(f"- **할로겐결합:** {', '.join(docking2['interaction_fingerprint']['Halogenbonds']) if docking2['interaction_fingerprint']['Halogenbonds'] else '없음'}")
+                st.markdown(f"- **반데르발스 접촉:** {', '.join(docking2['interaction_fingerprint']['VdWContacts']) if docking2['interaction_fingerprint']['VdWContacts'] else '없음'}")
     
     # Phase 2: Generation - 3개 전문가 독립 분석
     st.markdown("---")

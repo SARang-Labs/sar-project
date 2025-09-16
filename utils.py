@@ -22,7 +22,6 @@ Dependencies:
 
 # === 표준 라이브러리 및 외부 패키지 ===
 import pandas as pd
-import numpy as np
 import streamlit as st
 import json
 from rdkit import Chem
@@ -506,38 +505,6 @@ def find_quantitative_pairs(df, similarity_threshold, activity_col):
 
 # === AI 가설 생성 및 도킹 시뮬레이션 ===
 
-def get_example_docking_data(smiles, pdb_id="6G6K"):
-    """
-    예시 도킹 데이터를 반환합니다.
-    실제 시스템에서는 이 함수가 실제 도킹 시뮬레이션을 수행하도록 교체될 예정입니다.
-    """
-    # 예시 도킹 결과 (dock_example.md의 데이터 활용)
-    example_docking = {
-        "smiles": smiles,
-        "pdb_id": pdb_id,
-        "binding_affinity_kcal_mol": -9.2,  # Vina 도킹 affinity 값
-        "interaction_fingerprint": {
-            "Hydrogenbonds": [
-                "ARG24.A",
-                "SER77.B",
-                "GLU199.A"
-            ],
-            "Hydrophobic": [
-                "PHE52.A",
-                "LEU98.A"
-            ],
-            "Waterbridges": [
-                "THR100.A"
-            ],
-            "Saltbridges": [
-                "ASP200.B"
-            ],
-            "Halogenbonds": [
-                "TYR44.B"
-            ]
-        }
-    }
-    return example_docking
 
 def get_docking_context(smiles1, smiles2, target_name="6G6K"):
     """
@@ -561,53 +528,98 @@ def get_docking_context(smiles1, smiles2, target_name="6G6K"):
         - 실제 분자 도킹 계산이 아닌 예시 데이터 기반 시뮬레이션
         - Halogen bonding (Br vs Cl) 효과를 반영한 현실적 결과 제공
     """
-    
-    # ID 95 (Br 포함): 더 강한 결합
-    if "Br" in smiles1:
-        docking1 = {
-            "smiles": smiles1,
-            "pdb_id": target_name,
-            "binding_affinity_kcal_mol": -9.2,  # 강한 결합
-            "interaction_fingerprint": {
-                "Hydrogenbonds": ["ARG24.A", "SER77.B", "GLU199.A"],
-                "Hydrophobic": ["PHE52.A", "LEU98.A", "TRP45.A"],  # Br의 강한 소수성 상호작용
-                "Waterbridges": ["THR100.A"],
-                "Saltbridges": ["ASP200.B"],
-                "Halogenbonds": ["TYR44.B"]  # Br의 할로겐 결합
+
+    # dock_example.md의 실제 도킹 데이터를 직접 사용
+    # ID 51 화합물 데이터
+    docking_data_51 = {
+        "smiles": "Cc1cc(CS(=O)c2[nH]c3c(Br)ccc(Cl)c3c(=O)c2C(=O)C2CC2)no1",
+        "pdb_id": "6G6K",
+        "binding_affinity_kcal_mol": -7.095,
+        "prolif": {
+            "ifp_dataframe": {
+                "UNL1.L|LYS944.A|VdWContact": {"0": True},
+                "UNL1.L|ALA948.A|VdWContact": {"0": True},
+                "UNL1.L|VAL940.C|VdWContact": {"0": True},
+                "UNL1.L|LEU210.D|Hydrophobic": {"0": True},
+                "UNL1.L|LEU210.D|VdWContact": {"0": True},
+                "UNL1.L|ARG214.D|VdWContact": {"0": True}
             }
         }
-    else:
-        docking1 = get_example_docking_data(smiles1, target_name)
-        
-    # ID 86 (Cl-Cl): 더 약한 결합
-    if "Cl" in smiles2 and "Br" not in smiles2:
-        docking2 = {
-            "smiles": smiles2,
-            "pdb_id": target_name,
-            "binding_affinity_kcal_mol": -8.1,  # Br보다 약한 결합
-            "interaction_fingerprint": {
-                "Hydrogenbonds": ["ARG24.A", "SER77.B"],  # 수소결합 감소
-                "Hydrophobic": ["PHE52.A", "LEU98.A"],  # Cl의 약한 소수성 상호작용
-                "Waterbridges": ["THR100.A"],
-                "Saltbridges": ["ASP200.B"],
-                "Halogenbonds": []  # Cl의 약한 할로겐 결합 능력
+    }
+
+    # ID 96 화합물 데이터
+    docking_data_96 = {
+        "smiles": "CC(=O)c1c(S(=O)Cc2cc(C)on2)[nH]c2c(Br)ccc(Cl)c2c1=O",
+        "pdb_id": "6G6K",
+        "binding_affinity_kcal_mol": -6.765,
+        "prolif": {
+            "ifp_dataframe": {
+                "UNL1.L|PRO938.A|VdWContact": {"0": True},
+                "UNL1.L|VAL940.A|Hydrophobic": {"0": True},
+                "UNL1.L|LEU210.B|VdWContact": {"0": True},
+                "UNL1.L|ARG214.B|VdWContact": {"0": True},
+                "UNL1.L|LYS944.C|VdWContact": {"0": True}
             }
         }
-    else:
-        docking2 = get_example_docking_data(smiles2, target_name)
-        docking2["binding_affinity_kcal_mol"] = -7.8
-        docking2["interaction_fingerprint"] = {
-            "Hydrogenbonds": ["ARG24.A", "THR100.A"],
-            "Hydrophobic": ["PHE52.A", "LEU98.A", "VAL123.B"],
-            "Waterbridges": [],
-            "Saltbridges": ["ASP200.B"],
-            "Halogenbonds": []
-        }
-    
+    }
+
+    # SMILES가 정확히 일치하는 경우에만 도킹 데이터 사용
+    docking1 = None
+    docking2 = None
+
+    # 첫 번째 화합물 매칭
+    if smiles1 == docking_data_51["smiles"] and target_name == docking_data_51["pdb_id"]:
+        docking1 = convert_docking_format(docking_data_51)
+    elif smiles1 == docking_data_96["smiles"] and target_name == docking_data_96["pdb_id"]:
+        docking1 = convert_docking_format(docking_data_96)
+
+    # 두 번째 화합물 매칭
+    if smiles2 == docking_data_51["smiles"] and target_name == docking_data_51["pdb_id"]:
+        docking2 = convert_docking_format(docking_data_51)
+    elif smiles2 == docking_data_96["smiles"] and target_name == docking_data_96["pdb_id"]:
+        docking2 = convert_docking_format(docking_data_96)
+
+    # 도킹 데이터가 하나라도 없으면 둘 다 None으로 설정 (일관성을 위해)
+    if docking1 is None or docking2 is None:
+        return {"compound1": None, "compound2": None}
+
+    print("[도킹 시뮬레이션] dock_example.md의 실제 도킹 데이터 활용")
     return {"compound1": docking1, "compound2": docking2}
 
+def convert_docking_format(docking_data):
+    """
+    dock_example.md의 ProLIF 도킹 데이터를 시스템에서 사용하는 형식으로 변환합니다.
+    ProLIF는 VdWContact와 Hydrophobic 상호작용만 기록합니다.
+    """
+    # ProLIF 상호작용 데이터를 읽기 쉬운 형식으로 변환
+    interactions = {
+        "Hydrophobic": [],
+        "VdWContacts": []
+    }
 
-def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activity_col='pIC50'):  # activity_col은 기본 파라미터로 사용
+    if "prolif" in docking_data and "ifp_dataframe" in docking_data["prolif"]:
+        for interaction_key, value in docking_data["prolif"]["ifp_dataframe"].items():
+            # 값이 True인 경우에만 처리
+            if value.get("0", False):
+                parts = interaction_key.split("|")
+                if len(parts) >= 3:
+                    residue = parts[1]  # e.g., "LYS944.A"
+                    interaction_type = parts[2]  # e.g., "VdWContact"
+
+                    if interaction_type == "Hydrophobic":
+                        interactions["Hydrophobic"].append(residue)
+                    elif interaction_type == "VdWContact":
+                        interactions["VdWContacts"].append(residue)
+
+    return {
+        "smiles": docking_data["smiles"],
+        "pdb_id": docking_data["pdb_id"],
+        "binding_affinity_kcal_mol": docking_data["binding_affinity_kcal_mol"],
+        "interaction_fingerprint": interactions
+    }
+
+
+def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider):
     if not api_key:
         return "사이드바에 API 키를 입력해주세요.", None
 
@@ -617,37 +629,37 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     low_active = cliff_summary['low_activity_compound']
     metrics = cliff_summary['cliff_metrics']
     prop_diffs = cliff_summary['property_differences']
-    
+
     # 도킹 시뮬레이션 결과 가져오기
     docking_results = get_docking_context(high_active['smiles'], low_active['smiles'], target_name)
     docking1 = docking_results['compound1']
     docking2 = docking_results['compound2']
-    
-    # 도킹 데이터를 프롬프트에 포함할 형식으로 변환
-    docking_prompt_addition = f"""
-    
-    **도킹 시뮬레이션 결과:**
-    
-    화합물 A (낮은 활성):
-    - 결합 친화도: {docking2['binding_affinity_kcal_mol']} kcal/mol
-    - 수소결합: {', '.join(docking2['interaction_fingerprint']['Hydrogenbonds']) if docking2['interaction_fingerprint']['Hydrogenbonds'] else '없음'}
-    - 소수성 상호작용: {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}
-    - 물다리: {', '.join(docking2['interaction_fingerprint']['Waterbridges']) if docking2['interaction_fingerprint']['Waterbridges'] else '없음'}
-    - 염다리: {', '.join(docking2['interaction_fingerprint']['Saltbridges']) if docking2['interaction_fingerprint']['Saltbridges'] else '없음'}
-    - 할로겐결합: {', '.join(docking2['interaction_fingerprint']['Halogenbonds']) if docking2['interaction_fingerprint']['Halogenbonds'] else '없음'}
-    
-    화합물 B (높은 활성):
-    - 결합 친화도: {docking1['binding_affinity_kcal_mol']} kcal/mol
-    - 수소결합: {', '.join(docking1['interaction_fingerprint']['Hydrogenbonds']) if docking1['interaction_fingerprint']['Hydrogenbonds'] else '없음'}
-    - 소수성 상호작용: {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}
-    - 물다리: {', '.join(docking1['interaction_fingerprint']['Waterbridges']) if docking1['interaction_fingerprint']['Waterbridges'] else '없음'}
-    - 염다리: {', '.join(docking1['interaction_fingerprint']['Saltbridges']) if docking1['interaction_fingerprint']['Saltbridges'] else '없음'}
-    - 할로겐결합: {', '.join(docking1['interaction_fingerprint']['Halogenbonds']) if docking1['interaction_fingerprint']['Halogenbonds'] else '없음'}
-    
-    **도킹 결과 기반 가설 생성 요청:**
-    위의 도킹 시뮬레이션 결과를 바탕으로, 두 화합물의 결합 친화도 차이와 상호작용 패턴의 차이가 어떻게 활성도 차이로 이어지는지 설명해주세요.
-    특히 사라지거나 새로 형성된 상호작용이 활성에 미치는 영향을 중점적으로 분석해주세요.
-    """
+
+    # 도킹 데이터가 있는 경우에만 도킹 프롬프트 추가
+    if docking1 is not None and docking2 is not None:
+        # ProLIF 도킹 데이터를 프롬프트에 포함할 형식으로 변환
+        docking_prompt_addition = f"""
+
+        **도킹 시뮬레이션 결과 (ProLIF 분석):**
+
+        화합물 A (낮은 활성):
+        - 결합 친화도 (AutoDock Vina): {docking2['binding_affinity_kcal_mol']} kcal/mol
+        - 소수성 상호작용: {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}
+        - 반데르발스 접촉: {', '.join(docking2['interaction_fingerprint'].get('VdWContacts', [])) if docking2['interaction_fingerprint'].get('VdWContacts') else '없음'}
+
+        화합물 B (높은 활성):
+        - 결합 친화도 (AutoDock Vina): {docking1['binding_affinity_kcal_mol']} kcal/mol
+        - 소수성 상호작용: {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}
+        - 반데르발스 접촉: {', '.join(docking1['interaction_fingerprint'].get('VdWContacts', [])) if docking1['interaction_fingerprint'].get('VdWContacts') else '없음'}
+
+        **Activity Cliff 분석 - 도킹 결과 기반 가설 생성:**
+        이 두 화합물은 구조적으로 매우 유사함(높은 Tanimoto 유사도)에도 불구하고 큰 활성 차이를 보이는 Activity Cliff 사례입니다.
+        위의 도킹 시뮬레이션 결과를 바탕으로, 미세한 구조 차이가 어떻게 단백질 결합 방식의 변화를 통해 큰 활성도 차이로 이어지는지 설명해주세요.
+        특히 소수성 상호작용과 반데르발스 접촉 패턴의 차이가 Activity Cliff 현상을 유발하는 메커니즘을 중점적으로 분석해주세요.
+        """
+    else:
+        # 도킹 데이터가 없는 경우
+        docking_prompt_addition = ""
     
     context_info = docking_results  # 도킹 결과를 context_info로 사용
     
@@ -706,14 +718,29 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     try:
         if llm_provider == "OpenAI":
             client = OpenAI(api_key=api_key)
-            system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)와 도킹 시뮬레이션 결과에 대한 분석을 요청받았습니다. 도킹 결과에서 나타난 상호작용 패턴의 차이를 중심으로, 분석 결과를 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성해주세요."
+            system_prompt = """당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)와 도킹 시뮬레이션 결과에 대한 분석을 요청받았습니다.
+
+**중요한 응답 규칙:**
+1. 인사말, 감사 인사, "기꺼이 도와드리겠습니다" 등의 사족은 절대 포함하지 마세요.
+2. 바로 분석 내용으로 시작하세요.
+3. 도킹 결과에서 나타난 상호작용 패턴의 차이를 중심으로 분석하세요.
+4. 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성하세요.
+5. 일관된 '-입니다' 체로 작성하되, 가설이므로 확정적 단언은 지양하세요."""
             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
             return response.choices[0].message.content, context_info
-        
+
         elif llm_provider == "Gemini":
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash')
-            full_prompt = "당신은 숙련된 신약 개발 화학자입니다. 도킹 시뮬레이션 결과를 바탕으로 다음 요청에 대해 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 답변해주세요.\n\n" + user_prompt
+            full_prompt = """당신은 숙련된 신약 개발 화학자입니다.
+
+**중요한 응답 규칙:**
+1. 인사말, 감사 인사, "기꺼이 도와드리겠습니다" 등의 사족은 절대 포함하지 마세요.
+2. 바로 분석 내용으로 시작하세요.
+3. 도킹 시뮬레이션 결과를 바탕으로 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 답변하세요.
+4. 일관된 '-입니다' 체로 작성하되, 가설이므로 확정적 단언은 지양하세요.
+
+""" + user_prompt
             response = model.generate_content(full_prompt)
             return response.text, context_info
     except Exception as e:
@@ -754,7 +781,12 @@ def generate_hypothesis_quantitative(mol1, mol2, similarity, target_name, api_ke
 def call_llm(user_prompt, api_key, llm_provider):
     """LLM API를 호출하는 공통 함수입니다."""
     try:
-        system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 도킹 시뮬레이션 결과와 구조-활성 관계(SAR) 데이터를 바탕으로 명확하고 간결한 분석 리포트를 마크다운 형식으로 작성해주세요."
+        system_prompt = """당신은 숙련된 신약 개발 화학자입니다. 도킹 시뮬레이션 결과와 구조-활성 관계(SAR) 데이터를 바탕으로 명확하고 간결한 분석 리포트를 마크다운 형식으로 작성해주세요.
+
+**중요한 응답 규칙:**
+1. 인사말, 감사 인사, "기꺼이 도와드리겠습니다" 등의 사족은 절대 포함하지 마세요.
+2. 바로 분석 내용으로 시작하세요.
+3. 일관된 '-입니다' 체로 작성하되, 가설이므로 확정적 단언은 지양하세요."""
         if llm_provider == "OpenAI":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])

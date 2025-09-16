@@ -1,3 +1,24 @@
+"""
+AI 기반 구조-활성 관계(SAR) 분석 시스템
+
+신약 개발을 위한 Activity Cliff 탐지 및 전문가 협업 시스템의 메인 애플리케이션입니다.
+Co-Scientist 방법론을 기반으로 한 다각도 AI 전문가 분석을 제공합니다.
+
+주요 기능:
+    - Activity Cliff 탐지: 구조적으로 유사하지만 활성도가 큰 차이를 보이는 화합물 쌍 탐색
+    - 정량 분석: 활성 분류가 다른 화합물 쌍의 구조-활성 관계 분석
+    - AI 전문가 협업: 구조화학, 생체분자 상호작용, QSAR, 평가 전문가의 다각도 분석
+    - 도킹 결과 활용: 타겟 단백질과의 결합 양상 분석
+    - 분석 이력 관리: 과거 분석 결과 저장 및 조회
+
+사용 방법:
+    1. 특허 번호와 타겟을 선택
+    2. 분석 유형 선택 (활성 절벽 탐지 또는 정량 분석)
+    3. 유사도 및 활성도 차이 임계값 설정
+    4. AI 전문가 협업 시스템으로 종합 분석 실행
+"""
+
+# === 표준 라이브러리 및 외부 패키지 ===
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,8 +30,10 @@ from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 import json
 from sqlalchemy.orm import Session
+
+# === 프로젝트 내부 모듈 ===
 from patent_etl_pipeline.database import (
-    SessionLocal, Patent, Compound, Target, Activity, 
+    SessionLocal, Patent, Compound, Target, Activity,
     SAR_Analysis, AI_Hypothesis, DATABASE_PATH, init_db
 )
 from patent_etl_pipeline.run_etl import run_etl
@@ -29,30 +52,34 @@ from utils import (
     get_analysis_history
 )
 
-# --- 외부 시스템 임포트 ---
-try:
-    from online_discussion_system import run_online_discussion_system
-    ONLINE_DISCUSSION_AVAILABLE = True
-    print("✅ Co-Scientist 온라인 다각도 분석 시스템 로드 성공")
-except ImportError as e:
-    ONLINE_DISCUSSION_AVAILABLE = False
-    print(f"❌ Co-Scientist 온라인 다각도 분석 시스템 로드 실패: {str(e)}")
+# === 외부 시스템 임포트 ===
+from sar_analysis import run_online_discussion_system
+ONLINE_DISCUSSION_AVAILABLE = True
 
-try:
-    from llm_debate.debate.optimal_prompt_debate_manager import OptimalPromptDebateManager
-    from streamlit_components.optimal_prompt_debate_interface import OptimalPromptDebateInterface
-    PROMPT_SYSTEM_AVAILABLE = True
-    print("✅ 최적 프롬프트 분석 시스템 로드 성공")
-except ImportError as e:
-    PROMPT_SYSTEM_AVAILABLE = False
-    print(f"❌ 최적 프롬프트 분석 시스템 로드 실패: {str(e)}")
-
-# --- 페이지 기본 설정 ---
+# === 페이지 기본 설정 ===
 st.set_page_config(page_title="AI 기반 SAR 분석 시스템", page_icon="🧪", layout="wide")
 
 
-# --- 공통 로직 처리 헬퍼 함수 ---
+# === 공통 로직 처리 헬퍼 함수 ===
 def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
+    """
+    Activity Cliff 쌍의 상세 정보를 표시하고 AI 분석을 실행하는 함수
+
+    Args:
+        idx (int): 화합물 쌍의 인덱스
+        cliff_data (dict): Activity Cliff 데이터 (mol_1, mol_2, similarity, activity_difference 등)
+        sim_thresh (float): 유사도 임계값
+        activity_col (str): 분석 기준 활성도 컬럼명 (pIC50, pKi 등)
+        tab_key (str): 탭 키 (advanced, quantitative 등)
+        target_name (str): 타겟 단백질명 (PDB ID)
+        api_key (str): LLM API 키
+        llm_provider (str): LLM 공급자 (OpenAI, Gemini)
+        selected_patent (str): 선택된 특허 번호
+        cell_line (str, optional): 세포주명
+
+    Returns:
+        None: Streamlit UI에 직접 렌더링
+    """
     mol1 = pd.Series(cliff_data['mol_1'])
     mol2 = pd.Series(cliff_data['mol_2'])
     similarity = cliff_data['similarity']
@@ -104,31 +131,17 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
         
         st.markdown("---")
 
-        if tab_key.endswith('basic'):
-            if st.button("AI 가설 생성", key=f"gen_hyp_{idx}_{tab_key}"):
-                if not api_key: st.warning("사이드바에서 API 키를 입력해주세요.")
+        if tab_key.endswith('advanced'):
+            if st.button("분석 시작 및 결과 저장", key=f"disc_{idx}_{tab_key}"):
+                if not api_key:
+                    st.warning("사이드바에서 API 키를 입력해주세요.")
+                elif not ONLINE_DISCUSSION_AVAILABLE:
+                    st.error("온라인 다각도 분석 시스템 모듈을 로드할 수 없습니다.")
                 else:
-                    with st.spinner("AI 가설 생성 중..."):
-                        if tab_key.startswith('quantitative'):
-                            hypothesis, context = generate_hypothesis_quantitative(mol1, mol2, similarity, target_name, api_key, llm_provider)
-                        else: 
-                            hypothesis, context = generate_hypothesis_cliff(cliff_data, target_name, api_key, llm_provider, activity_col)
-                        st.markdown(hypothesis)
-                        if context:
-                            with st.expander("도킹 시뮬레이션 결과"): st.json(context)
-
-        elif tab_key.endswith('advanced'):
-
-         if st.button("분석 시작 및 결과 저장", key=f"disc_{idx}_{tab_key}"):
-            if not api_key: 
-                st.warning("사이드바에서 API 키를 입력해주세요.")
-            elif not ONLINE_DISCUSSION_AVAILABLE: 
-                st.error("온라인 다각도 분석 시스템 모듈을 로드할 수 없습니다.")
-            else:
-                with st.spinner("AI 전문가들이 다각도 분석 후 최종 리포트를 작성합니다..."):
-                    # 1. 온라인 다각도 분석 시스템 실행하여 최종 리포트 받기
-                    # target_name: PDB ID (도킹용), cell_line: 세포주 (실험조건용)
-                    final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider, cell_line)
+                    with st.spinner("AI 전문가들이 다각도 분석 후 최종 리포트를 작성합니다..."):
+                        # 1. 온라인 다각도 분석 시스템 실행하여 최종 리포트 받기
+                        # target_name: PDB ID (도킹용), cell_line: 세포주 (실험조건용)
+                        final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider, cell_line)
                     
                     # 도킹 시뮬레이션 결과가 있는 경우 별도 표시
                     if isinstance(final_report, dict) and 'domain_hypotheses' in final_report:
@@ -136,7 +149,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                             if hypothesis.get('agent_name') == '생체분자 상호작용 전문가' and 'docking_analysis' in hypothesis:
                                 with st.expander("도킹 시뮬레이션 결과", expanded=False):
                                     try:
-                                        from online_discussion_system import display_docking_results
+                                        from sar_analysis import display_docking_results
                                         display_docking_results(hypothesis['docking_analysis'], hypothesis['agent_name'])
                                     except ImportError:
                                         st.write("도킹 시뮬레이션 모듈을 로드할 수 없습니다.")
@@ -167,9 +180,28 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                         st.error("데이터베이스 저장에 실패했습니다.")
 
 
-# --- UI 렌더링 함수  ---
+# === UI 렌더링 함수 ===
 
 def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
+    """
+    정량 분석 UI를 렌더링하는 함수
+
+    구조적으로 유사하지만 활성 분류가 다른 화합물 쌍을 찾아 분석합니다.
+    Activity Cliff 분포 시각화와 상세 분석을 제공합니다.
+
+    Args:
+        df (pd.DataFrame): 분석할 화합물 데이터
+        available_activity_cols (list): 사용 가능한 활성도 컬럼 목록
+        tab_key (str): 탭 키 (분석 유형 구분용)
+        target_name (str): 타겟 단백질명
+        api_key (str): LLM API 키
+        llm_provider (str): LLM 공급자
+        selected_patent (str): 선택된 특허 번호
+        cell_line (str, optional): 세포주명
+
+    Returns:
+        None: Streamlit UI에 직접 렌더링
+    """
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
     if 'Activity' not in df.columns or not available_activity_cols:
         st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pIC50/pKi)이 없습니다.")
@@ -180,10 +212,8 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
     
     if st.button("정량 분석 실행", key=f'run_quant_{tab_key}'):
         with st.spinner("정량 분석 중..."):
-            # --- [수정된 부분] ---
-            # 복잡한 분석 로직 대신 utils.py의 함수를 한 줄로 호출합니다.
+            # utils.py의 find_quantitative_pairs 함수를 사용하여 정량 분석 실행
             pairs, df_quant_processed = find_quantitative_pairs(df, sim_thresh, ref_activity_col)
-            # --- [수정된 부분 끝] ---
             
             st.session_state[f'quant_pairs_{tab_key}'] = pairs
             st.session_state[f'quant_data_{tab_key}'] = df_quant_processed
@@ -264,6 +294,25 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                 )
 
 def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
+    """
+    Activity Cliff 탐지 UI를 렌더링하는 함수
+
+    구조적으로 유사하지만 활성 값의 차이가 큰 Activity Cliff 쌍을 탐지하고 분석합니다.
+    사용자가 활성도 컬럼과 임계값을 설정할 수 있으며, 분포 시각화를 제공합니다.
+
+    Args:
+        df (pd.DataFrame): 분석할 화합물 데이터
+        available_activity_cols (list): 사용 가능한 활성도 컬럼 목록
+        tab_key (str): 탭 키 (분석 유형 구분용)
+        target_name (str): 타겟 단백질명
+        api_key (str): LLM API 키
+        llm_provider (str): LLM 공급자
+        selected_patent (str): 선택된 특허 번호
+        cell_line (str, optional): 세포주명
+
+    Returns:
+        None: Streamlit UI에 직접 렌더링
+    """
     st.info("구조가 유사하지만 **선택된 활성 값의 차이가 큰** 쌍(Activity Cliff)을 탐색합니다.")
     if not available_activity_cols:
         st.error("오류: 분석 가능한 활성 컬럼(pIC50/pKi)이 없습니다.")
@@ -303,13 +352,13 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
             fig_scatter = px.scatter(
                 plot_df_scatter,
                 x='similarity',
-                y='activity_diff', 
+                y='activity_difference',
                 title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
-                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_difference': f'활성도 차이 (Δ{analyzed_col})'}, 
+                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_difference': f'활성도 차이 (Δ{analyzed_col})'},
                 hover_data=['pair_label', 'score'],
                 color='score',
                 color_continuous_scale=px.colors.sequential.Viridis,
-                size='activity_diff' 
+                size='activity_difference' 
             )
             fig_scatter.add_shape(
                 type="rect", xref="x", yref="y",
@@ -341,7 +390,7 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 )
 
 
-# --- DB 연동을 위한 데이터 로딩 함수 ---
+# === 데이터베이스 연동 함수 ===
 db_path = "patent_etl_pipeline/database/patent_data.db" 
 
 @st.cache_data
@@ -408,8 +457,24 @@ def get_data_for_patent_and_target(patent_number, target_name):
     finally:
         db.close()
 
-# --- Main App ---
+# === 메인 애플리케이션 ===
 def main():
+    """
+    SAR 분석 시스템의 메인 함수
+
+    Streamlit 웹 애플리케이션의 전체 UI를 구성하고 실행합니다.
+    데이터베이스 초기화, 특허 데이터 로드, 분석 실행, 결과 표시의 전체 워크플로우를 관리합니다.
+
+    주요 기능:
+        - 데이터베이스 자동 초기화
+        - 특허 및 타겟 선택 UI
+        - Activity Cliff 탐지 및 정량 분석
+        - AI 전문가 협업 시스템 실행
+        - 분석 이력 조회 및 관리
+
+    Returns:
+        None: Streamlit 앱 실행
+    """
     if not os.path.exists(DATABASE_PATH):
         st.title("🚀 SAR 분석 시스템 초기 설정")
         st.info("최초 실행을 위해 데이터베이스를 자동으로 생성합니다. 잠시만 기다려주세요...")
@@ -426,7 +491,7 @@ def main():
         st.title("AI SAR 분석 시스템")
         st.info("AI 기반 구조-활성 관계(SAR) 분석 및 예측 솔루션입니다.")   
 
-        # --- 데이터 로드 UI ---
+        # 데이터 로드 및 관리 UI
         with st.expander("📚 데이터 관리 (신규 특허 로드)", expanded=False):
             patent_number_input = st.text_input("특허 번호 입력", placeholder="예: 1020170094694")
             uploaded_file = st.file_uploader("특허 엑셀 파일 업로드", type=["xlsx"])
@@ -475,13 +540,13 @@ def main():
         llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Gemini"))
         api_key = st.text_input("API 키 입력:", type="password", placeholder="OpenAI 또는 Gemini API 키")
 
-    # --- 탭 구조 정의 ---
+    # 메인 탭 구성
     tab_titles = ["실시간 분석", "분석 이력 조회"]
 
     created_tabs = st.tabs(tab_titles)
     tab_map = {name: tab for name, tab in zip(tab_titles, created_tabs)}
 
-    # --- 탭 1: 실시간 분석 ---
+    # 실시간 분석 탭
     with tab_map["실시간 분석"]:
         st.header("실시간 분석 대시보드")
         df, available_activity_cols = None, []
@@ -550,7 +615,7 @@ def main():
         else:
             st.info("분석을 시작하려면 사이드바에서 특허와 타겟을 모두 선택하세요.")
 
-    # --- 탭 2: 분석 이력 조회 ---
+    # 분석 이력 조회 탭
     with tab_map["분석 이력 조회"]:
         st.header("분석 이력 조회")
 

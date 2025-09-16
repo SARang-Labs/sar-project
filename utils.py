@@ -1,20 +1,57 @@
+"""
+SAR 분석 시스템 핵심 유틸리티 모듈
+
+신약 개발을 위한 구조-활성 관계(SAR) 분석에 필요한 핵심 기능들을 제공합니다.
+분자 데이터 처리, Activity Cliff 탐지, AI 가설 생성, 도킹 시뮬레이션 등의 기능을 포함합니다.
+
+주요 기능 카테고리:
+    - 데이터베이스 연동: 분석 결과 저장 및 조회
+    - 데이터 전처리: 분자 데이터 로드, 정규화, 핑거프린트 생성
+    - Activity Cliff 분석: 구조 유사성과 활성도 차이 기반 탐지
+    - 정량 분석: 활성 분류 차이 기반 화합물 쌍 분석
+    - AI 가설 생성: LLM 기반 구조-활성 관계 해석
+    - 분자 시각화: 구조적 차이점 하이라이팅
+    - 도킹 시뮬레이션: 타겟 단백질 결합 예측
+
+Dependencies:
+    - RDKit: 분자 화학정보학 처리
+    - pandas/numpy: 데이터 분석
+    - OpenAI/Google Gemini: AI 가설 생성
+    - SQLAlchemy: 데이터베이스 연동
+"""
+
+# === 표준 라이브러리 및 외부 패키지 ===
 import pandas as pd
 import numpy as np
 import streamlit as st
+import json
 from rdkit import Chem
-from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS, rdDepictor
+from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS, rdDepictor, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
 from openai import OpenAI
-import json
+
+# === 프로젝트 내부 모듈 ===
 from patent_etl_pipeline.database import SessionLocal, Patent, SAR_Analysis, AI_Hypothesis
 
-# --- 결과 저장 함수 ---
+# === 데이터베이스 연동 함수 ===
 def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider, context_info=None):
     """
-    [SQLAlchemy] 분석 결과(cliff)와 AI 가설을 데이터베이스에 저장합니다.
+    Activity Cliff 분석 결과와 AI 가설을 데이터베이스에 저장
+
+    Args:
+        patent_number (str): 특허 번호
+        cliff_data (dict): Activity Cliff 데이터 (mol_1, mol_2, similarity, activity_difference 등)
+        hypothesis_text (str): AI가 생성한 가설 텍스트
+        llm_provider (str): LLM 공급자명 (OpenAI, Gemini 등)
+        context_info (dict, optional): 추가 컨텍스트 정보
+
+    Returns:
+        int: 저장된 분석 ID, 실패시 None
+
+    Raises:
+        Exception: 데이터베이스 저장 실패시
     """
     db = SessionLocal()
     try:
@@ -42,7 +79,7 @@ def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider,
             compound_id_1=safe_int_id(cliff_data['mol_1'].get('ID')),
             compound_id_2=safe_int_id(cliff_data['mol_2'].get('ID')),
             similarity=cliff_data.get('similarity'),
-            activity_difference=cliff_data.get('activity_diff'),
+            activity_difference=cliff_data.get('activity_difference'),
             score=cliff_data.get('score')
         )
         db.add(new_analysis)
@@ -68,7 +105,7 @@ def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider,
     finally:
         db.close()
 
-# --- 데이터 조회 함수 ---
+# === 분석 이력 조회 함수 ===
 def get_analysis_history():
     """
     [SQLAlchemy] SAR 분석 및 AI 가설 전체 이력을 데이터베이스에서 가져옵니다.
@@ -107,7 +144,7 @@ def get_analysis_history():
         db.close()
 
 
-# --- Helper Functions ---
+# === 데이터 전처리 함수 ===
 def canonicalize_smiles(smiles):
     """SMILES를 RDKit의 표준 Isomeric SMILES로 변환합니다."""
     if not isinstance(smiles, str):
@@ -184,7 +221,21 @@ def check_stereoisomers(smiles1, smiles2):
     return canonical_1 == canonical_2 and isomeric_1 != isomeric_2
 
 def calculate_molecular_properties(mol):
-    """분자의 주요 물리화학적 특성을 계산합니다."""
+    """
+    분자의 핵심 물리화학적 특성 계산
+
+    Args:
+        mol (rdkit.Chem.Mol): RDKit 분자 객체
+
+    Returns:
+        dict: 계산된 분자 특성 딕셔너리
+              - molecular_weight: 분자량 (Da)
+              - logp: 옥탄올-물 분배계수
+              - hbd: 수소결합 공여체 수
+              - hba: 수소결합 수용체 수
+              - rotatable_bonds: 회전 가능한 결합 수
+              - tpsa: 극성 표면적
+    """
     if not mol:
         return {}
     
@@ -273,11 +324,26 @@ def get_activity_cliff_summary(cliff_data, activity_col=None):
     }
     return summary
 
-# --- Phase 1: 데이터 준비 및 탐색 ---
+# === Activity Cliff 탐지 함수 ===
 def load_data(df_from_db):
     """
-    데이터베이스에서 로드된 데이터프레임을 받아 후처리를 수행합니다.
-    'Target'을 포함한 모든 컬럼을 유지합니다.
+    데이터베이스에서 로드된 화합물 데이터의 후처리 및 전처리
+
+    SMILES 문자열을 RDKit 분자 객체로 변환하고, 분자 핑거프린트와 scaffold를 계산합니다.
+    활성도 데이터를 정규화하고 분석에 필요한 형태로 변환합니다.
+
+    Args:
+        df_from_db (pd.DataFrame): 데이터베이스에서 로드된 원본 데이터프레임
+                                   (SMILES, Target, pIC50, Activity 등 포함)
+
+    Returns:
+        tuple: (처리된 DataFrame, 사용가능한 활성도 컬럼 리스트)
+               실패시 (None, [])
+
+    Note:
+        - 유효하지 않은 SMILES는 자동으로 제거됩니다
+        - pKi 값은 pIC50으로 통합됩니다
+        - Murcko scaffold가 자동으로 계산됩니다
     """
     try:
         df = df_from_db.copy()
@@ -314,10 +380,30 @@ def load_data(df_from_db):
         st.error(f"데이터 후처리 중 오류 발생: {e}")
         return None, []
 
-# --- Phase 2: 핵심 패턴 자동 추출 ---
+# === 정량 분석 함수 ===
 @st.cache_data
 def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, activity_col='pIC50'):
-    """DataFrame에서 Activity Cliff 쌍을 찾고 스코어를 계산하여 정렬합니다."""
+    """
+    Activity Cliff 쌍 탐지 및 우선순위 결정
+
+    구조적으로 유사하지만 활성도 차이가 큰 화합물 쌍을 탐지합니다.
+    Tanimoto 유사도와 활성도 차이를 기반으로 종합 스코어를 계산합니다.
+
+    Args:
+        df (pd.DataFrame): 분석할 화합물 데이터프레임 (SMILES, 활성도 포함)
+        similarity_threshold (float): 최소 Tanimoto 유사도 임계값 (0.0-1.0)
+        activity_diff_threshold (float): 최소 활성도 차이 임계값
+        activity_col (str): 활성도 컬럼명 (default: 'pIC50')
+
+    Returns:
+        list: Activity Cliff 쌍의 리스트, 스코어 순으로 정렬
+              각 요소는 mol_1, mol_2, similarity, activity_difference, score 등을 포함하는 dict
+
+    Note:
+        - Morgan 핑거프린트 (반지름=2, 크기=2048, 입체화학 포함)를 사용
+        - 같은 scaffold를 갖는 쌍에 가중치 부여
+        - 스코어 = 활성도차이 × (유사도-임계값) × scaffold_bonus
+    """
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
     
     fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048, includeChirality=True)
@@ -418,7 +504,7 @@ def find_quantitative_pairs(df, similarity_threshold, activity_col):
     # 나중에 UI에서 원본 데이터를 참조할 수 있도록 처리된 데이터프레임도 함께 반환
     return pairs, df_quant
 
-# --- Phase 3: LLM 기반 해석 및 가설 생성 (도킹 데이터 활용) ---
+# === AI 가설 생성 및 도킹 시뮬레이션 ===
 
 def get_example_docking_data(smiles, pdb_id="6G6K"):
     """
@@ -455,8 +541,25 @@ def get_example_docking_data(smiles, pdb_id="6G6K"):
 
 def get_docking_context(smiles1, smiles2, target_name="6G6K"):
     """
-    두 화합물의 도킹 시뮬레이션 결과를 생성합니다.
-    실제 데이터 ID 95 (Br)와 ID 86 (Cl)에 기반한 도킹 예시
+    분자 도킹 시뮬레이션 컨텍스트 생성
+
+    두 화합물의 타겟 단백질에 대한 도킹 결과를 시뮬레이션합니다.
+    실제 계산 대신 실험 데이터 기반의 현실적인 예시 결과를 제공합니다.
+
+    Args:
+        smiles1 (str): 첫 번째 화합물의 SMILES 문자열
+        smiles2 (str): 두 번째 화합물의 SMILES 문자열
+        target_name (str): 타겟 단백질 PDB ID (default: "6G6K")
+
+    Returns:
+        dict: 도킹 시뮬레이션 결과 딕셔너리
+              - compound1/compound2: 각 화합물의 도킹 정보
+              - binding_site_analysis: 결합 부위 분석
+              - comparative_analysis: 비교 분석 결과
+
+    Note:
+        - 실제 분자 도킹 계산이 아닌 예시 데이터 기반 시뮬레이션
+        - Halogen bonding (Br vs Cl) 효과를 반영한 현실적 결과 제공
     """
     
     # ID 95 (Br 포함): 더 강한 결합
@@ -665,9 +768,27 @@ def call_llm(user_prompt, api_key, llm_provider):
         return f"{llm_provider} API 호출 중 오류 발생: {e}"
 
 
-# --- Phase 4: 시각화 ---
+# === 분자 시각화 함수 ===
 def draw_highlighted_pair(smiles1, smiles2):
-    """두 분자의 공통 구조를 기준으로 정렬하고 차이점을 하이라이팅하여 SVG 이미지 쌍으로 반환합니다."""
+    """
+    분자 구조 차이점 하이라이팅 시각화
+
+    두 분자의 최대 공통 부분구조(MCS)를 찾아 정렬하고,
+    구조적 차이점을 색상으로 하이라이팅한 SVG 이미지를 생성합니다.
+
+    Args:
+        smiles1 (str): 첫 번째 분자의 SMILES 문자열
+        smiles2 (str): 두 번째 분자의 SMILES 문자열
+
+    Returns:
+        tuple: (svg1, svg2) SVG 형식의 분자 구조 이미지 쌍
+               실패시 (None, None)
+
+    Note:
+        - MCS 알고리즘을 사용하여 공통 구조 탐지
+        - 차이점은 빨간색으로 하이라이팅
+        - 이미지 크기: 300x200 픽셀
+    """
     mol1 = Chem.MolFromSmiles(smiles1)
     mol2 = Chem.MolFromSmiles(smiles2)
     if not mol1 or not mol2:

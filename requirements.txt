@@ -3,9 +3,17 @@ pandas
 numpy
 rdkit
 google-generativeai
-joblib
-requests
-seaborn
+# joblib
+# requests
+# seaborn
 plotly
 openai
-Chem
+# langgraph
+# langchain
+# langchain-openai
+# langchain-google-genai
+# typing-extensions
+# pydantic
+# futurehouse-client
+sqlalchemy
+openpyxl

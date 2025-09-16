@@ -108,81 +108,77 @@ class StructuralChemistryExpert:
             'timestamp': time.time()
         }
     
-        def _build_structural_prompt(self, shared_context: Dict[str, Any]) -> str:
-                """구조화학 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
-                cliff_summary = shared_context['cliff_summary']
-                target_name = shared_context['target_name']
-                high_active = cliff_summary['high_activity_compound']
-                low_active = cliff_summary['low_activity_compound']
-                metrics = cliff_summary['cliff_metrics']
-                prop_diffs = cliff_summary['property_differences']
+    def _build_structural_prompt(self, shared_context: Dict[str, Any]) -> str:
+        """구조화학 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
+        cliff_summary = shared_context['cliff_summary']
+        target_name = shared_context['target_name']  # target_name 추가
+        high_active = cliff_summary['high_activity_compound']
+        low_active = cliff_summary['low_activity_compound']
+        metrics = cliff_summary['cliff_metrics']
+        prop_diffs = cliff_summary['property_differences']
+        
+        literature_info = ""
+        if shared_context.get('literature_context'):
+            lit = shared_context['literature_context']
+            literature_info = f"""
+            **도킹 시뮬레이션 결과 (구조 기반 근거):**
+            - 화합물 1 결합 친화도: {lit.get('compound1', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 2 결합 친화도: {lit.get('compound2', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
+            - 화합물 1 주요 상호작용: {', '.join([k for k, v in lit.get('compound1', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 화합물 2 주요 상호작용: {', '.join([k for k, v in lit.get('compound2', {}).get('interaction_fingerprint', {}).items() if v])}
+            - 이 도킹 결과를 근거로 구조적 차이가 활성 차이로 이어지는 메커니즘을 분석하세요.
+            """
+        
+        # Few-Shot 예시 (실제 SAR 사례)
+        few_shot_example = """
+        **Few-Shot 예시 - 전문가 분석 과정 참조:**
+        
+        [예시] 벤조디아제핀 유도체 Activity Cliff 분석:
+        구조 A: 클로르디아제폭시드 (pIC50: 7.2) vs 구조 B: 디아제팜 (pIC50: 8.9)
+        
+        1. 구조 비교: A는 N-옥사이드 형태, B는 7번 위치에 염소 치환
+        2. 물리화학적 영향: N-옥사이드 제거로 전자밀도 증가, 지용성 향상 (LogP +0.8)
+        3. 생체 상호작용: GABA 수용체와의 결합 기하학 개선, π-π 스택킹 강화
+        4. 활성 변화 연결: 개선된 단백질 적합성으로 1.7 pIC50 단위 활성 증가
+        5. 추가 실험: 분자 도킹 시뮬레이션으로 결합 모드 확인, ADMET 예측
+        
+        [귀하의 분석 과제]
+        """
+        
+        return f"""
+        당신은 20년 경력의 선임 약화학자입니다. SAR과 Activity Cliff 분석에서 분자 구조와 전자적 특성 변화 분석의 전문가로서, 실제 신약 개발 현장에서 사용하는 체계적 분석 절차를 따라 정확하고 신뢰할 수 있는 가설을 생성해주세요.
+        
+        {few_shot_example}
+        
+        **Activity Cliff 분석 대상:**
+        
+        **실험 조건:**
+        - 타겟 단백질: {target_name} (PDB ID)
+        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
+        
+        **화합물 정보:**
+        - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
+          SMILES: {high_active['smiles']}
+        - 저활성 화합물: {low_active['id']} (pIC50: {low_active['pic50']})
+          SMILES: {low_active['smiles']}
+        
+        **In-Context 구조적 특성 (할루시네이션 방지용):**
+        - Tanimoto 유사도: {metrics['similarity']:.3f}
+        - 활성도 차이: {metrics['activity_difference']}
+        - 구조적 차이 유형: {metrics['structural_difference_type']}
+        - 입체이성질체 여부: {metrics['is_stereoisomer_pair']}
+        - 분자량 차이: {prop_diffs['mw_diff']:.2f} Da
+        - LogP 차이: {prop_diffs['logp_diff']:.2f}
+        - TPSA 차이: {prop_diffs.get('tpsa_diff', 0):.2f} Ų
+        
+        {literature_info}
+        
+        **단계별 Chain-of-Thought 분석 수행:**
+        실제 약화학자가 사용하는 분석 절차를 따라 다음 5단계로 체계적으로 분석하세요:
+        
 
-                # 동적으로 activity_col 사용
-                activity_col = shared_context.get('activity_col', 'pIC50')
-                high_pic50 = high_active.get(activity_col)
-                low_pic50 = low_active.get(activity_col)
-
-                literature_info = ""
-                if shared_context.get('literature_context'):
-                        lit = shared_context['literature_context']
-                        literature_info = f"""
-                        **도킹 시뮬레이션 결과 (구조 기반 근거):**
-                        - 화합물 1 결합 친화도: {lit.get('compound1', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
-                        - 화합물 2 결합 친화도: {lit.get('compound2', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
-                        - 화합물 1 주요 상호작용: {', '.join([k for k, v in lit.get('compound1', {}).get('interaction_fingerprint', {}).items() if v])}
-                        - 화합물 2 주요 상호작용: {', '.join([k for k, v in lit.get('compound2', {}).get('interaction_fingerprint', {}).items() if v])}
-                        - 이 도킹 결과를 근거로 구조적 차이가 활성 차이로 이어지는 메커니즘을 분석하세요.
-                        """
-
-                # Few-Shot 예시 (실제 SAR 사례)
-                few_shot_example = """
-                **Few-Shot 예시 - 전문가 분석 과정 참조:**
+        1. **구조 비교**: 두 구조 A와 B의 차이점을 정확히 식별하세요. SMILES 구조를 상세히 비교하여 치환기, 고리 구조, 입체화학의 정확한 변화를 기술하세요.
         
-                [예시] 벤조디아제핀 유도체 Activity Cliff 분석:
-                구조 A: 클로르디아제폭시드 (pIC50: 7.2) vs 구조 B: 디아제팜 (pIC50: 8.9)
-        
-                1. 구조 비교: A는 N-옥사이드 형태, B는 7번 위치에 염소 치환
-                2. 물리화학적 영향: N-옥사이드 제거로 전자밀도 증가, 지용성 향상 (LogP +0.8)
-                3. 생체 상호작용: GABA 수용체와의 결합 기하학 개선, π-π 스택킹 강화
-                4. 활성 변화 연결: 개선된 단백질 적합성으로 1.7 pIC50 단위 활성 증가
-                5. 추가 실험: 분자 도킹 시뮬레이션으로 결합 모드 확인, ADMET 예측
-        
-                [귀하의 분석 과제]
-                """
-
-                return f"""
-                당신은 20년 경력의 선임 약화학자입니다. SAR과 Activity Cliff 분석에서 분자 구조와 전자적 특성 변화 분석의 전문가로서, 실제 신약 개발 현장에서 사용하는 체계적 분석 절차를 따라 정확하고 신뢰할 수 있는 가설을 생성해주세요.
-        
-                {few_shot_example}
-        
-                **Activity Cliff 분석 대상:**
-        
-                **실험 조건:**
-                - 타겟 단백질: {target_name} (PDB ID)
-                {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
-        
-                **화합물 정보:**
-                - 고활성 화합물: {high_active['id']} (pIC50: {high_pic50})
-                    SMILES: {high_active['smiles']}
-                - 저활성 화합물: {low_active['id']} (pIC50: {low_pic50})
-                    SMILES: {low_active['smiles']}
-        
-                **In-Context 구조적 특성 (할루시네이션 방지용):**
-                - Tanimoto 유사도: {metrics['similarity']:.3f}
-                - 활성도 차이: {metrics['activity_difference']}
-                - 구조적 차이 유형: {metrics['structural_difference_type']}
-                - 입체이성질체 여부: {metrics['is_stereoisomer_pair']}
-                - 분자량 차이: {prop_diffs['mw_diff']:.2f} Da
-                - LogP 차이: {prop_diffs['logp_diff']:.2f}
-                - TPSA 차이: {prop_diffs.get('tpsa_diff', 0):.2f} Ų
-        
-                {literature_info}
-        
-                **단계별 Chain-of-Thought 분석 수행:**
-                실제 약화학자가 사용하는 분석 절차를 따라 다음 5단계로 체계적으로 분석하세요:
-        
-                1. **구조 비교**: 두 구조 A와 B의 차이점을 정확히 식별하세요. SMILES 구조를 상세히 비교하여 치환기, 고리 구조, 입체화학의 정확한 변화를 기술하세요.
-                """
         2. **물리화학적 영향**: 식별된 변경이 소수성(LogP), 수소 결합 능력, 전자 분포, 극성 표면적(TPSA)에 미치는 영향을 추론하세요. 정량적 변화값을 활용하세요.
         
         3. **생체 상호작용 가설**: 이 변경이 표적 단백질 결합 친화도나 대사 안정성에 어떻게 작용할지 구체적인 분자 수준 메커니즘을 가설로 제시하세요.

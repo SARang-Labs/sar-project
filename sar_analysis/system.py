@@ -112,33 +112,38 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
         st.code(cliff_summary['low_activity_compound']['smiles'], language=None)
         st.write(f"**활성도 차이:** {cliff_summary['cliff_metrics']['activity_difference']}")
     
-    # 도킹 시뮬레이션 결과 표시
+    # 도킹 시뮬레이션 결과 표시 (있는 경우에만)
     cliff_summary = shared_context.get('cliff_summary', {})
     if cliff_summary:
         high_compound = cliff_summary.get('high_activity_compound', {})
         low_compound = cliff_summary.get('low_activity_compound', {})
         target_name = shared_context.get('target_name', 'EGFR')
-        
-        # 도킹 결과 생성 (get_docking_context 함수 사용)
+
+        # 도킹 결과 가져오기 시도
         from utils import get_docking_context
         docking_results = get_docking_context(high_compound.get('smiles'), low_compound.get('smiles'), target_name)
-        
-        with st.expander("도킹 시뮬레이션 결과 - Activity Cliff 분석을 위한 단백질 결합 차이", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"**화합물 1 (낮은 활성, ID: {low_compound.get('id', 'N/A')})**")
-                docking1 = docking_results['compound2']
-                st.markdown(f"- **결합 친화도:** {docking1['binding_affinity_kcal_mol']} kcal/mol")
-                st.markdown(f"- **소수성 상호작용:** {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}")
-                st.markdown(f"- **반데르발스 접촉:** {', '.join(docking1['interaction_fingerprint']['VdWContacts']) if docking1['interaction_fingerprint']['VdWContacts'] else '없음'}")
-            
-            with col2:
-                st.markdown(f"**화합물 2 (높은 활성, ID: {high_compound.get('id', 'N/A')})**")
-                docking2 = docking_results['compound1']
-                st.markdown(f"- **결합 친화도:** {docking2['binding_affinity_kcal_mol']} kcal/mol")
-                st.markdown(f"- **소수성 상호작용:** {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}")
-                st.markdown(f"- **반데르발스 접촉:** {', '.join(docking2['interaction_fingerprint']['VdWContacts']) if docking2['interaction_fingerprint']['VdWContacts'] else '없음'}")
+
+        # docking_results가 유효하고 compound1, compound2가 None이 아닌 경우에만 표시
+        if (docking_results and isinstance(docking_results, dict) and
+            'compound1' in docking_results and 'compound2' in docking_results and
+            docking_results['compound1'] is not None and docking_results['compound2'] is not None):
+
+            with st.expander("도킹 시뮬레이션 결과", expanded=False):
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown(f"**화합물 1 (낮은 활성, ID: {low_compound.get('id', 'N/A')})**")
+                    docking1 = docking_results['compound2']
+                    st.markdown(f"- **결합 친화도:** {docking1['binding_affinity_kcal_mol']} kcal/mol")
+                    st.markdown(f"- **소수성 상호작용:** {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}")
+                    st.markdown(f"- **반데르발스 접촉:** {', '.join(docking1['interaction_fingerprint']['VdWContacts']) if docking1['interaction_fingerprint']['VdWContacts'] else '없음'}")
+
+                with col2:
+                    st.markdown(f"**화합물 2 (높은 활성, ID: {high_compound.get('id', 'N/A')})**")
+                    docking2 = docking_results['compound1']
+                    st.markdown(f"- **결합 친화도:** {docking2['binding_affinity_kcal_mol']} kcal/mol")
+                    st.markdown(f"- **소수성 상호작용:** {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}")
+                    st.markdown(f"- **반데르발스 접촉:** {', '.join(docking2['interaction_fingerprint']['VdWContacts']) if docking2['interaction_fingerprint']['VdWContacts'] else '없음'}")
     
     # Phase 2: Generation - 3개 전문가 독립 분석
     st.markdown("---")
@@ -330,13 +335,18 @@ def prepare_shared_context(selected_cliff: Dict, target_name: str, cell_line: st
     )
     cliff_summary = get_activity_cliff_summary(selected_cliff)
     
-    # 도킹 컨텍스트 품질 향상
-    if docking_context and isinstance(docking_context, dict):
+    # 도킹 컨텍스트 품질 향상 (compound1/compound2가 None이 아닌 경우에만)
+    if (docking_context and isinstance(docking_context, dict) and
+        'compound1' in docking_context and 'compound2' in docking_context and
+        docking_context['compound1'] is not None and docking_context['compound2'] is not None):
         # 도킹 정보 강화
         enhanced_docking = docking_context.copy()
         enhanced_docking['context_type'] = 'Docking Simulation Result'
         enhanced_docking['usage_instruction'] = f"이 도킹 결과를 {target_name} 타겟에 대한 Activity Cliff 분석의 구조적 근거로 활용하세요"
         docking_context = enhanced_docking
+    else:
+        # 도킹 결과가 없는 경우 None으로 설정
+        docking_context = None
     
     # 세포주 정보 가져오기 (있는 경우)
     cell_line_context = None

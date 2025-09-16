@@ -375,27 +375,35 @@ class BiomolecularInteractionExpert:
                 target_name
             )
             
-            # 결과를 기존 형식으로 변환
-            results = {
-                'high_active_docking': {
-                    'binding_affinity': docking_results['compound1']['binding_affinity_kcal_mol'],
-                    'interactions': docking_results['compound1']['interaction_fingerprint']
-                },
-                'low_active_docking': {
-                    'binding_affinity': docking_results['compound2']['binding_affinity_kcal_mol'],
-                    'interactions': docking_results['compound2']['interaction_fingerprint']
+            # compound1과 compound2가 None이 아닌지 확인
+            if (docking_results and
+                docking_results.get('compound1') is not None and
+                docking_results.get('compound2') is not None):
+
+                # 결과를 기존 형식으로 변환
+                results = {
+                    'high_active_docking': {
+                        'binding_affinity': docking_results['compound1']['binding_affinity_kcal_mol'],
+                        'interactions': docking_results['compound1']['interaction_fingerprint']
+                    },
+                    'low_active_docking': {
+                        'binding_affinity': docking_results['compound2']['binding_affinity_kcal_mol'],
+                        'interactions': docking_results['compound2']['interaction_fingerprint']
+                    }
                 }
-            }
-            
-            # 비교 분석
-            high_score = results['high_active_docking']['binding_affinity']
-            low_score = results['low_active_docking']['binding_affinity']
-            results['comparative_analysis'] = {
-                'affinity_difference': high_score - low_score,
-                'supports_activity_cliff': high_score < low_score  # 낮은 값이 더 강한 결합
-            }
-            
-            return results
+
+                # 비교 분석
+                high_score = results['high_active_docking']['binding_affinity']
+                low_score = results['low_active_docking']['binding_affinity']
+                results['comparative_analysis'] = {
+                    'affinity_difference': high_score - low_score,
+                    'supports_activity_cliff': high_score < low_score  # 낮은 값이 더 강한 결합
+                }
+
+                return results
+            else:
+                # 도킹 결과가 없는 경우
+                return None
         
         return {}
     
@@ -893,10 +901,10 @@ class HypothesisEvaluationExpert:
             cliff_info = f"""
     **Activity Cliff 분석 대상:**
     - 타겟 단백질: {target_name} (PDB ID){cell_line_info}
-    - 고활성 화합물: {high_comp.get('id', 'N/A')} (pIC50: {high_comp.get('pki', 'N/A')})
-    - 저활성 화합물: {low_comp.get('id', 'N/A')} (pIC50: {low_comp.get('pki', 'N/A')})
+    - 고활성 화합물: {high_comp.get('id', 'N/A')} (pIC50: {high_comp.get('pic50', 'N/A')})
+    - 저활성 화합물: {low_comp.get('id', 'N/A')} (pIC50: {low_comp.get('pic50', 'N/A')})
     - 활성도 차이: {metrics.get('activity_difference', 'N/A')}
-    - 구조 유사도: {metrics.get('structural_similarity', 'N/A')}"""
+    - 구조 유사도: {metrics.get('similarity', 'N/A')}"""
         
         # 문헌 정보 구성
         literature_info = ""
@@ -1119,7 +1127,7 @@ class HypothesisEvaluationExpert:
         
         **Activity Cliff 구조 활성 차이 정보:**
         - 타겟: {shared_context.get('target_name', '알 수 없음')}
-        - 문헌 근거: {shared_context.get('literature_context', {}).get('title', '관련 문헌 없음')[:100]}
+        - 문헌 근거: {(shared_context.get('literature_context') or {}).get('title', '관련 문헌 없음')[:100] if shared_context.get('literature_context') else '도킹 데이터 활용'}
 
         **통합 원칙:**
         1. **주요 가설을 핵심 베이스**로 사용하되, 다른 가설들의 우수한 요소들을 체계적으로 통합

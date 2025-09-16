@@ -12,7 +12,7 @@ Activity Cliff 쌍에 대해 여러 전문가 에이전트가 협업하여 구�
 
 Co-Scientist 워크플로우:
 1. 공유 컨텍스트 준비 (실험 데이터, 도킹 결과)
-2. 다학제 전문가 가설 생성 (구조화학, 생체분자상호작용, QSAR)
+2. 전문가 가설 생성 (구조화학, 생체분자상호작용, QSAR)
 3. 가설 평가 및 종합
 4. 결과 시각화 및 표시
 """
@@ -69,7 +69,7 @@ def run_online_discussion_system(selected_cliff: Dict, target_name: str, api_key
     """
     Co-Scientist 방법론 기반 SAR 분석 시스템
 
-    Activity Cliff 쌍에 대해 다학제 전문가 에이전트들이 협업하여
+    Activity Cliff 쌍에 대해 전문가 에이전트들이 협업하여
     구조-활성 관계 가설을 생성하고 평가하는 메인 시스템입니다.
 
     워크플로우:

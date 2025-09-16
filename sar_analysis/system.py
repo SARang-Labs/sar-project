@@ -27,7 +27,7 @@ import streamlit as st
 # === 프로젝트 내부 모듈 ===
 # utils에서 필요한 함수들 import
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils import get_activity_cliff_summary
+from utils import get_activity_cliff_summary, draw_highlighted_pair
 
 from .llm_client import UnifiedLLMClient
 from .experts import (
@@ -201,11 +201,12 @@ def display_simplified_results(final_report: Dict):
             - domain_hypotheses: 전문가별 가설
             - process_metadata: 처리 메타데이터
     """
-    
+
     # 최종 종합 가설 표시
     final_hypothesis = final_report.get('final_hypothesis', '')
     if final_hypothesis:
-        st.markdown(final_hypothesis)
+        # Activity Cliff 분자 구조 부분을 실제 이미지로 교체하여 표시
+        display_hypothesis_with_images(final_hypothesis, final_report)
     else:
         st.warning("최종 종합 가설을 생성할 수 없습니다.")
         
@@ -253,6 +254,56 @@ def display_simplified_results(final_report: Dict):
         st.metric("통합 강점", f"{synthesis_metadata.get('total_strengths_considered', 0)}개")
     with col4:
         st.metric("통합 인사이트", f"{synthesis_metadata.get('total_insights_integrated', 0)}개")
+
+
+def display_hypothesis_with_images(final_hypothesis: str, final_report: Dict):
+    """
+    최종 가설과 함께 Activity Cliff 분자 구조 이미지를 간단하게 표시
+
+    Args:
+        final_hypothesis (str): 최종 가설 마크다운 텍스트
+        final_report (Dict): 최종 분석 결과 (cliff_context 포함)
+    """
+    # final_hypothesis에서 "## 최종 가설 제안" 이후의 내용 추출
+    import re
+
+    # "## 최종 가설 제안"으로 시작하는 부분 찾기
+    pattern = r'^##\s*최종 가설 제안'
+    match = re.search(pattern, final_hypothesis, re.MULTILINE)
+
+    if match:
+        # 제목 표시
+        st.markdown("## 최종 가설 제안")
+
+        # Activity Cliff 분자 구조를 최종 가설 제안 섹션 내부의 첫 부분에 표시
+        cliff_context = final_report.get('cliff_context', {})
+        if cliff_context:
+            try:
+                high_compound = cliff_context.get('high_activity_compound', {})
+                low_compound = cliff_context.get('low_activity_compound', {})
+
+                if high_compound.get('smiles') and low_compound.get('smiles'):
+                    # 분자구조 이미지 생성 및 표시
+                    svg1, svg2 = draw_highlighted_pair(high_compound['smiles'], low_compound['smiles'])
+                    if svg1 and svg2:
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.image(svg1, width=300)
+                            st.caption(f"고활성 화합물: {high_compound.get('id', 'N/A')} (pIC50: {high_compound.get('pic50', 'N/A')})\n{high_compound.get('smiles', 'N/A')}")
+                        with c2:
+                            st.image(svg2, width=300)
+                            st.caption(f"저활성 화합물: {low_compound.get('id', 'N/A')} (pIC50: {low_compound.get('pic50', 'N/A')})\n{low_compound.get('smiles', 'N/A')}")
+
+            except Exception as e:
+                st.warning(f"분자구조 이미지를 표시할 수 없습니다: {str(e)}")
+
+        # 제목 이후의 나머지 내용 표시
+        remaining_content = final_hypothesis[match.end():].strip()
+        if remaining_content:
+            st.markdown(remaining_content)
+    else:
+        # 제목이 없는 경우 전체 내용 그대로 표시
+        st.markdown(final_hypothesis)
 
 
 def prepare_shared_context(selected_cliff: Dict, target_name: str, cell_line: str = None) -> Dict:

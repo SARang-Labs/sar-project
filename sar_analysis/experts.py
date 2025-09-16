@@ -133,6 +133,12 @@ class StructuralChemistryExpert:
         low_active = cliff_summary['low_activity_compound']
         metrics = cliff_summary['cliff_metrics']
         prop_diffs = cliff_summary['property_differences']
+
+        # 세포주 정보 안전하게 처리
+        cell_line_info = ""
+        if shared_context.get('cell_line_context'):
+            cell_line_name = shared_context['cell_line_context'].get('cell_line_name', 'Unknown')
+            cell_line_info = f"- 측정 세포주: {cell_line_name}"
         
         literature_info = ""
         if shared_context.get('literature_context'):
@@ -168,10 +174,10 @@ class StructuralChemistryExpert:
         {few_shot_example}
         
         **Activity Cliff 분석 대상:**
-        
+
         **실험 조건:**
         - 타겟 단백질: {target_name} (PDB ID)
-        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
+        {cell_line_info}
         
         **화합물 정보:**
         - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
@@ -391,6 +397,12 @@ class BiomolecularInteractionExpert:
         low_active = cliff_summary['low_activity_compound']
         metrics = cliff_summary['cliff_metrics']
         prop_diffs = cliff_summary['property_differences']
+
+        # 세포주 정보 안전하게 처리
+        cell_line_info = ""
+        if shared_context.get('cell_line_context'):
+            cell_line_name = shared_context['cell_line_context'].get('cell_line_name', 'Unknown')
+            cell_line_info = f"- 측정 세포주: {cell_line_name}"
         
         literature_info = ""
         if shared_context.get('literature_context'):
@@ -426,10 +438,10 @@ class BiomolecularInteractionExpert:
         {few_shot_example}
         
         **Activity Cliff 분석 대상:**
-        
+
         **실험 조건:**
         - 타겟 단백질: {target_name} (PDB ID)
-        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
+        {cell_line_info}
         
         **화합물 정보:**
         - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
@@ -635,6 +647,12 @@ class QSARExpert:
         low_active = cliff_summary['low_activity_compound']
         metrics = cliff_summary['cliff_metrics']
         prop_diffs = cliff_summary['property_differences']
+
+        # 세포주 정보 안전하게 처리
+        cell_line_info = ""
+        if shared_context.get('cell_line_context'):
+            cell_line_name = shared_context['cell_line_context'].get('cell_line_name', 'Unknown')
+            cell_line_info = f"- 측정 세포주: {cell_line_name}"
         
         literature_info = ""
         if shared_context.get('literature_context'):
@@ -670,10 +688,10 @@ class QSARExpert:
         {few_shot_example}
         
         **Activity Cliff 분석 대상:**
-        
+
         **실험 조건:**
         - 타겟 단백질: {target_name} (PDB ID)
-        {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
+        {cell_line_info}
         
         **화합물 정보:**
         - 고활성: {high_active['id']} (pIC50: {high_active['pic50']})
@@ -1095,6 +1113,7 @@ class HypothesisEvaluationExpert:
 
         **작성 형식:**
         ## 최종 가설 제안
+
         **주요 베이스: 채택된 핵심 분석**
         
         **1. 구조적 차이점 분석**
@@ -1227,9 +1246,10 @@ class HypothesisEvaluationExpert:
         4. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
         5. 각 분석의 고유한 통찰을 통합하되, **전문가 Agent 이름은 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
            - 금지: "구조화학 전문가에 따르면", "QSAR 전문가 분석", "생체분자 상호작용 전문가의 결과" 등
-        
+
         **작성 형식:**
         ## 최종 가설 제안
+
         **주요 베이스: 채택된 핵심 분석**
         
         **1. 구조적 차이점 분석**

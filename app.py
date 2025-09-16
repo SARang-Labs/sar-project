@@ -527,7 +527,7 @@ def main():
         if selected_patent:
             target_list = get_targets_for_patent(selected_patent)
             if target_list:
-                selected_target = st.selectbox("2. 분석할 타겟을 선택하세요:", options=[""] + target_list)
+                selected_target = st.selectbox("2. 분석할 세포주를 선택하세요:", options=[""] + target_list)
             else:
                 st.warning(f"'{selected_patent}' 특허에 대한 타겟 데이터가 없습니다.")
 

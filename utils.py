@@ -8,14 +8,19 @@ from rdkit.Chem import DataStructs, rdFingerprintGenerator
 from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
 from openai import OpenAI
-import requests
-import xml.etree.ElementTree as ET
-import joblib
 import json
-import os
-from urllib.parse import quote
-import itertools
 from patent_etl_pipeline.database import SessionLocal, Patent, SAR_Analysis, AI_Hypothesis
+import os
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# 현재 파일의 디렉토리 기준으로 docking_pipeline 경로 추가
+current_dir = os.path.dirname(os.path.abspath(__file__))
+docking_path = os.path.join(current_dir, 'docking_pipeline')
+
+if docking_path not in sys.path:
+    sys.path.append(docking_path)
 
 # --- 결과 저장 함수 ---
 def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider, context_info=None):
@@ -31,10 +36,22 @@ def save_results_to_db(patent_number, cliff_data, hypothesis_text, llm_provider,
             return None
 
         # 1. sar_analyses 테이블에 분석 결과 저장
+        # ID 값을 정수로 변환 (문자열인 경우 해시 또는 기본값 사용)
+        def safe_int_id(id_value):
+            if isinstance(id_value, (int, float)):
+                return int(id_value)
+            elif isinstance(id_value, str):
+                try:
+                    return int(id_value)
+                except ValueError:
+                    # 문자열 ID인 경우 해시값 사용 (또는 0으로 기본값)
+                    return abs(hash(id_value)) % 1000000
+            return 0
+        
         new_analysis = SAR_Analysis(
             patent_id=patent.patent_id,
-            compound_id_1=cliff_data['mol_1'].get('ID'),
-            compound_id_2=cliff_data['mol_2'].get('ID'),
+            compound_id_1=safe_int_id(cliff_data['mol_1'].get('ID')),
+            compound_id_2=safe_int_id(cliff_data['mol_2'].get('ID')),
             similarity=cliff_data.get('similarity'),
             activity_difference=cliff_data.get('activity_diff'),
             score=cliff_data.get('score')
@@ -86,6 +103,13 @@ def get_analysis_history():
                  .order_by(Patent.patent_number, SAR_Analysis.analysis_timestamp.desc()).statement
         
         df = pd.read_sql_query(query, db.bind)
+        
+        # Arrow 변환 문제를 방지하기 위해 ID 컬럼들을 정수형으로 확실히 변환
+        if not df.empty:
+            for col in ['compound_id_1', 'compound_id_2']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        
         return df
     except Exception as e:
         st.error(f"분석 이력 로딩 중 오류 발생: {e}")
@@ -186,7 +210,7 @@ def calculate_molecular_properties(mol):
         properties['aromatic_rings'] = Descriptors.NumAromaticRings(mol)
         properties['heavy_atoms'] = mol.GetNumHeavyAtoms()
         properties['formal_charge'] = Chem.rdmolops.GetFormalCharge(mol)
-    except Exception as e:
+    except Exception:
         # 오류 발생 시 기본값들로 채움
         properties = {
             'molecular_weight': 0.0,
@@ -205,7 +229,7 @@ def calculate_molecular_properties(mol):
 def get_activity_cliff_summary(cliff_data, activity_col=None):
     """
     Activity Cliff 데이터의 요약 정보를 생성합니다.
-    분류형('activity')과 숫자형('pki') 활성도 정보를 모두 포함하여 외부 모듈과의 호환성을 완벽하게 보장합니다.
+    분류형('activity')과 숫자형('pIC50') 활성도 정보를 모두 포함하여 외부 모듈과의 호환성을 완벽하게 보장합니다.
     """
     mol1_info, mol2_info = cliff_data['mol_1'], cliff_data['mol_2']
     high_props, low_props = cliff_data.get('mol1_properties', {}), cliff_data.get('mol2_properties', {})
@@ -227,15 +251,15 @@ def get_activity_cliff_summary(cliff_data, activity_col=None):
         activity_display_key = activity_col if activity_col else 'Activity'
         activity_display_value = compound_info.get(activity_display_key)
         
-        # 'pki' 키: 데이터에 'pKi' 컬럼이 있으면 그 숫자 값을, 없으면 0.0을 사용
-        pki_numeric_value = compound_info.get('pKi')
-        pki_value = pki_numeric_value if isinstance(pki_numeric_value, (int, float)) else 0.0
+        # 'pic50' 키: 데이터에 'pIC50' 컬럼이 있으면 그 숫자 값을, 없으면 0.0을 사용
+        pic50_numeric_value = compound_info.get('pIC50')
+        pic50_value = pic50_numeric_value if isinstance(pic50_numeric_value, (int, float)) else 0.0
         
         return {
             'id': compound_info.get('ID'),
             'smiles': compound_info.get('SMILES'),
             'activity': activity_display_value,
-            'pki': pki_value,
+            'pic50': pic50_value,
             'properties': props
         }
 
@@ -269,11 +293,12 @@ def load_data(df_from_db):
     try:
         df = df_from_db.copy()
 
-        # 1. pKi, pIC50 컬럼을 찾아 'pKi'로 통합 (pKi 우선)
-        if "pIC50" in df.columns and "pKi" not in df.columns:
-            df.rename(columns={"pIC50": "pKi"}, inplace=True)
-        elif "pIC50" in df.columns and "pKi" in df.columns:
-            df['pKi'] = df['pKi'].fillna(df['pIC50'])
+        # 1. pIC50, pKi 컬럼을 찾아 'pIC50'로 통합 (pIC50 우선)
+        if "pKi" in df.columns and "pIC50" not in df.columns:
+            df.rename(columns={"pKi": "pIC50"}, inplace=True)
+        elif "pKi" in df.columns and "pIC50" in df.columns:
+            df['pIC50'] = df['pIC50'].fillna(df['pKi'])
+            df.drop(columns=['pKi'], inplace=True)
         
         # 2. 필수 컬럼(SMILES) 존재 여부 확인
         if 'SMILES' not in df.columns:
@@ -290,9 +315,9 @@ def load_data(df_from_db):
             st.warning(f"경고: {invalid_smiles_count}개의 유효하지 않은 SMILES 데이터가 제외되었습니다.")
 
         # 4. 분석 가능한 활성 컬럼 목록 반환
-        activity_cols = [col for col in ["pKi", "pIC50"] if col in df.columns and pd.to_numeric(df[col], errors='coerce').notna().any()]
+        activity_cols = [col for col in ["pIC50", "pKi"] if col in df.columns and pd.to_numeric(df[col], errors='coerce').notna().any()]
         if not activity_cols:
-            st.warning("경고: 분석 가능한 숫자형 활성 데이터(pKi 또는 pIC50)가 없습니다.")
+            st.warning("경고: 분석 가능한 숫자형 활성 데이터(pIC50 또는 pKi)가 없습니다.")
 
         return df, activity_cols
 
@@ -302,7 +327,7 @@ def load_data(df_from_db):
 
 # --- Phase 2: 핵심 패턴 자동 추출 ---
 @st.cache_data
-def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, activity_col='pKi'):
+def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, activity_col='pIC50'):
     """DataFrame에서 Activity Cliff 쌍을 찾고 스코어를 계산하여 정렬합니다."""
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
     
@@ -353,7 +378,7 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold, acti
                         'mol_1': mol1_info, 
                         'mol_2': mol2_info, 
                         'similarity': sim, 
-                        'activity_diff': act_diff, 
+                        'activity_difference': act_diff,
                         'score': score,
                         'structural_difference': structural_diff,
                         'is_stereoisomer': is_stereoisomer,
@@ -404,45 +429,9 @@ def find_quantitative_pairs(df, similarity_threshold, activity_col):
     # 나중에 UI에서 원본 데이터를 참조할 수 있도록 처리된 데이터프레임도 함께 반환
     return pairs, df_quant
 
-# --- Phase 3: LLM 기반 해석 및 가설 생성 (RAG 적용) ---
+# --- Phase 3: LLM 기반 해석 및 가설 생성 (도킹 데이터 활용) ---
 
-@st.cache_data
-def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
-    def fetch_articles(search_term):
-        try:
-            esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-            params = {'db': 'pubmed', 'term': search_term, 'retmax': max_results, 'sort': 'relevance'}
-            response = requests.get(esearch_url, params=params, timeout=10)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            id_list = [elem.text for elem in root.findall('.//Id')]
-            if not id_list: return None
-
-            efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-            params = {'db': 'pubmed', 'id': ",".join(id_list), 'retmode': 'xml'}
-            response = requests.get(efetch_url, params=params, timeout=10)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            
-            article = root.find('.//PubmedArticle')
-            if article:
-                title = article.findtext('.//ArticleTitle', 'No title found')
-                abstract = " ".join([p.text for p in article.findall('.//Abstract/AbstractText') if p.text])
-                pmid = article.findtext('.//PMID', '')
-                if not abstract: abstract = 'No abstract found'
-                return {"title": title, "abstract": abstract, "pmid": pmid, "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"}
-        except Exception:
-            return None
-        return None
-
-    diff_keyword = get_structural_difference_keyword(smiles1, smiles2)
-    if diff_keyword and (result := fetch_articles(f'("{target_name}"[Title/Abstract]) AND ("{diff_keyword}"[Title/Abstract])')):
-        return result
-    
-    return fetch_articles(f'("{target_name}"[Title/Abstract]) AND ("structure activity relationship"[Title/Abstract])')
-
-
-def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activity_col='pKi'):
+def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activity_col='pIC50'):  # activity_col은 기본 파라미터로 사용
     if not api_key:
         return "사이드바에 API 키를 입력해주세요.", None
 
@@ -453,8 +442,40 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     metrics = cliff_summary['cliff_metrics']
     prop_diffs = cliff_summary['property_differences']
     
-    context_info = search_pubmed_for_context(high_active['smiles'], low_active['smiles'], target_name)
-    rag_prompt_addition = f"\n\n**참고 문헌 정보:**\n- 제목: {context_info['title']}\n- 초록: {context_info['abstract']}\n\n위 참고 문헌의 내용을 바탕으로 가설을 생성해주세요." if context_info else ""
+    # 도킹 시뮬레이션 결과 가져오기
+    docking_results = get_docking_context(high_active['smiles'], low_active['smiles'], target_name)
+    docking1 = docking_results['compound1']
+    docking2 = docking_results['compound2']
+    
+    # 도킹 데이터를 프롬프트에 포함할 형식으로 변환
+    docking_prompt_addition = f"""
+    
+    **도킹 시뮬레이션 결과:**
+    
+    화합물 A (낮은 활성):
+    - 결합 친화도: {docking2['binding_affinity_kcal_mol']} kcal/mol
+    - 수소결합: {', '.join(docking2['interaction_fingerprint']['Hydrogenbonds']) if docking2['interaction_fingerprint']['Hydrogenbonds'] else '없음'}
+    - 소수성 상호작용: {', '.join(docking2['interaction_fingerprint']['Hydrophobic']) if docking2['interaction_fingerprint']['Hydrophobic'] else '없음'}
+    - 물다리: {', '.join(docking2['interaction_fingerprint']['Waterbridges']) if docking2['interaction_fingerprint']['Waterbridges'] else '없음'}
+    - 염다리: {', '.join(docking2['interaction_fingerprint']['Saltbridges']) if docking2['interaction_fingerprint']['Saltbridges'] else '없음'}
+    - 할로겐결합: {', '.join(docking2['interaction_fingerprint']['Halogenbonds']) if docking2['interaction_fingerprint']['Halogenbonds'] else '없음'}
+    - 반데르발스 접촉: {', '.join(docking2['interaction_fingerprint']['VdWContact']) if docking2['interaction_fingerprint']['VdWContact'] else '없음'}
+       
+    화합물 B (높은 활성):
+    - 결합 친화도: {docking1['binding_affinity_kcal_mol']} kcal/mol
+    - 수소결합: {', '.join(docking1['interaction_fingerprint']['Hydrogenbonds']) if docking1['interaction_fingerprint']['Hydrogenbonds'] else '없음'}
+    - 소수성 상호작용: {', '.join(docking1['interaction_fingerprint']['Hydrophobic']) if docking1['interaction_fingerprint']['Hydrophobic'] else '없음'}
+    - 물다리: {', '.join(docking1['interaction_fingerprint']['Waterbridges']) if docking1['interaction_fingerprint']['Waterbridges'] else '없음'}
+    - 염다리: {', '.join(docking1['interaction_fingerprint']['Saltbridges']) if docking1['interaction_fingerprint']['Saltbridges'] else '없음'}
+    - 할로겐결합: {', '.join(docking1['interaction_fingerprint']['Halogenbonds']) if docking1['interaction_fingerprint']['Halogenbonds'] else '없음'}
+    - 반데르발스 접촉: {', '.join(docking1['interaction_fingerprint']['VdWContact']) if docking1['interaction_fingerprint']['VdWContact'] else '없음'}
+    
+    **도킹 결과 기반 가설 생성 요청:**
+    위의 도킹 시뮬레이션 결과를 바탕으로, 두 화합물의 결합 친화도 차이와 상호작용 패턴의 차이가 어떻게 활성도 차이로 이어지는지 설명해주세요.
+    특히 사라지거나 새로 형성된 상호작용이 활성에 미치는 영향을 중점적으로 분석해주세요.
+    """
+    
+    context_info = docking_results  # 도킹 결과를 context_info로 사용
     
     # 입체이성질체 분석
     if metrics['is_stereoisomer_pair']:
@@ -482,7 +503,7 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     - **화합물 A (낮은 활성):**
       - ID: {low_active['id']}
       - 표준 SMILES: {low_active['smiles']}
-      - 활성도 (pKi): {low_active['pki']}
+      - 활성도 (pIC50): {low_active['pic50']}
       - 분자량: {low_active['properties']['molecular_weight']:.2f} Da
       - LogP: {low_active['properties']['logp']:.2f}
       - TPSA: {low_active['properties']['tpsa']:.2f} Ų
@@ -490,14 +511,14 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     - **화합물 B (높은 활성):**
       - ID: {high_active['id']}
       - 표준 SMILES: {high_active['smiles']}
-      - 활성도 (pKi): {high_active['pki']}
+      - 활성도 (pIC50): {high_active['pic50']}
       - 분자량: {high_active['properties']['molecular_weight']:.2f} Da
       - LogP: {high_active['properties']['logp']:.2f}
       - TPSA: {high_active['properties']['tpsa']:.2f} Ų
     
     **Activity Cliff 메트릭:**
     - Tanimoto 유사도: {metrics['similarity']:.3f}
-    - 활성도 차이 (ΔpKi): {metrics['activity_difference']}
+    - 활성도 차이 (ΔpIC50): {metrics['activity_difference']}
     - Cliff 점수: {metrics['cliff_score']:.3f}
     
     {props_info}
@@ -505,20 +526,20 @@ def generate_hypothesis_cliff(cliff, target_name, api_key, llm_provider, activit
     **분석 요청:**
     두 화합물은 구조적으로 매우 유사하지만, 활성도에서 큰 차이를 보이는 전형적인 'Activity Cliff' 사례입니다.
     위의 상세한 분자 정보와 물리화학적 특성을 종합적으로 분석하여, **이러한 활성도 차이를 유발하는** 핵심적인 구조적 요인과 그 메커니즘에 대한 과학적 가설을 제시해주세요.
-    특히 타겟 단백질 {target_name}와의 상호작용 관점에서 설명해주세요.{prompt_addition}{rag_prompt_addition}
+    특히 타겟 단백질 {target_name}와의 상호작용 관점에서 설명해주세요.{prompt_addition}{docking_prompt_addition}
     """
 
     try:
         if llm_provider == "OpenAI":
             client = OpenAI(api_key=api_key)
-            system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다. 분석 결과를 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성해주세요."
+            system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)와 도킹 시뮬레이션 결과에 대한 분석을 요청받았습니다. 도킹 결과에서 나타난 상호작용 패턴의 차이를 중심으로, 분석 결과를 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성해주세요."
             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
             return response.choices[0].message.content, context_info
         
         elif llm_provider == "Gemini":
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash')
-            full_prompt = "당신은 숙련된 신약 개발 화학자입니다. 다음 요청에 대해 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 답변해주세요.\n\n" + user_prompt
+            full_prompt = "당신은 숙련된 신약 개발 화학자입니다. 도킹 시뮬레이션 결과를 바탕으로 다음 요청에 대해 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 답변해주세요.\n\n" + user_prompt
             response = model.generate_content(full_prompt)
             return response.text, context_info
     except Exception as e:
@@ -531,24 +552,35 @@ def generate_hypothesis_quantitative(mol1, mol2, similarity, target_name, api_ke
     if not api_key:
         return "사이드바에 API 키를 입력해주세요.", None
     
-    context_info = search_pubmed_for_context(mol1['SMILES'], mol2['SMILES'], target_name)
-    rag_prompt_addition = f"\n\n**참고 문헌 정보:**\n- 제목: {context_info['title']}\n- 초록: {context_info['abstract']}\n\n위 문헌을 바탕으로 가설을 생성해주세요." if context_info else ""
+    # 도킹 시뮬레이션 결과 가져오기
+    docking_results = get_docking_context(mol1['SMILES'], mol2['SMILES'], target_name)
+    docking1 = docking_results['compound1']
+    docking2 = docking_results['compound2']
+    
+    docking_prompt = f"""
+    \n\n**도킹 시뮬레이션 결과:**
+    화합물 1: 결합 친화도 {docking1['binding_affinity_kcal_mol']} kcal/mol
+    화합물 2: 결합 친화도 {docking2['binding_affinity_kcal_mol']} kcal/mol
+    
+    도킹 결과를 바탕으로 활성 분류 차이를 설명해주세요.
+    """
     
     user_prompt = f"""
     **분석 대상:** 타겟 단백질 {target_name}
     - **화합물 1:** ID {mol1['ID']}, SMILES {mol1['SMILES']}, 활성 분류: {mol1['Activity']}
     - **화합물 2:** ID {mol2['ID']}, SMILES {mol2['SMILES']}, 활성 분류: {mol2['Activity']}
     **유사도:** {similarity}
-    **분석 요청:** 두 화합물은 구조적으로 매우 유사하지만 활성 분류가 다릅니다. 이 차이를 유발하는 구조적 요인에 대한 과학적 가설을 제시해주세요.{rag_prompt_addition}
+    **분석 요청:** 두 화합물은 구조적으로 매우 유사하지만 활성 분류가 다릅니다. 이 차이를 유발하는 구조적 요인에 대한 과학적 가설을 제시해주세요.{docking_prompt}
     """
     
+    context_info = docking_results
     return call_llm(user_prompt, api_key, llm_provider), context_info
 
 
 def call_llm(user_prompt, api_key, llm_provider):
     """LLM API를 호출하는 공통 함수입니다."""
     try:
-        system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 주어진 데이터를 바탕으로 구조-활성 관계(SAR)에 대한 명확하고 간결한 분석 리포트를 마크다운 형식으로 작성해주세요."
+        system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 도킹 시뮬레이션 결과와 구조-활성 관계(SAR) 데이터를 바탕으로 명확하고 간결한 분석 리포트를 마크다운 형식으로 작성해주세요."
         if llm_provider == "OpenAI":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
@@ -609,3 +641,202 @@ def draw_highlighted_pair(smiles1, smiles2):
     svg2 = _mol_to_svg(mol2, highlight2)
     
     return svg1, svg2
+
+def get_real_docking_context(smiles1, smiles2, target_name="6G6K"):
+    """
+    실제 docking-pipeline을 사용하여 두 화합물의 도킹 시뮬레이션을 수행
+    """
+    try:
+        # 절대 경로로 docking_pipeline 모듈 임포트 시도
+        import sys
+        import os
+        
+        # 현재 작업 디렉토리에서 docking_pipeline 찾기
+        current_dir = os.getcwd()
+        docking_path = os.path.join(current_dir, 'docking_pipeline')
+        
+        if not os.path.exists(docking_path):
+            # 상위 디렉토리에서도 찾아보기
+            parent_dir = os.path.dirname(current_dir)
+            docking_path = os.path.join(parent_dir, 'docking_pipeline')
+            
+        if not os.path.exists(docking_path):
+            raise ImportError(f"docking_pipeline 디렉토리를 찾을 수 없습니다. 경로: {docking_path}")
+        
+        # 경로 추가 (프로젝트 루트 경로)
+        project_root = os.path.dirname(docking_path)
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+
+        # 도킹 파이프라인 모듈 임포트 (패키지 경로 명확화)
+        from docking_pipeline.main import run_full_docking_pipeline
+        
+        # 진행 상황 표시
+        if 'st' in globals():
+            progress_bar = st.progress(0, text="🧬 실제 도킹 시뮬레이션 준비 중...")
+
+        results = {}
+        
+        # 두 화합물 순차 도킹 (안정성을 위해 병렬 대신 순차 처리)
+        if 'st' in globals():
+            progress_bar.progress(0.2, text="⚗️ 화합물 1 도킹 시뮬레이션 중...")
+        
+        result1 = run_full_docking_pipeline(smiles1, target_name.upper(), f"{target_name}_compound1")
+        results['compound1'] = result1
+        
+        if 'st' in globals():
+            progress_bar.progress(0.6, text="⚗️ 화합물 2 도킹 시뮬레이션 중...")
+        
+        result2 = run_full_docking_pipeline(smiles2, target_name.upper(), f"{target_name}_compound2")
+        results['compound2'] = result2
+        
+        if 'st' in globals():
+            progress_bar.progress(1.0, text="🎯 실제 도킹 분석 완료!")
+            time.sleep(0.5)
+            progress_bar.empty()
+
+        # 기존 형식으로 변환
+        return convert_docking_results_to_context(results, smiles1, smiles2, target_name)
+
+    except ImportError as e:
+        raise ImportError(f"도킹 파이프라인 모듈을 로드할 수 없습니다: {e}")
+    except Exception as e:
+        raise Exception(f"도킹 시뮬레이션 실행 중 오류: {e}")
+    
+
+# 기존 get_docking_context 함수를 실제 도킹으로 대체
+def get_docking_context(smiles1, smiles2, target_name="6G6K"):
+    """실제 도킹 파이프라인을 우선 사용하고, 실패 시에만 폴백"""
+    
+    # 디버깅 정보 (Streamlit 환경에서만)
+    if 'st' in globals():
+        st.info("🔄 실제 도킹 파이프라인 연동 시도 중...")
+    
+    # 1단계: 실제 도킹 파이프라인 시도
+    try:
+        return get_real_docking_context(smiles1, smiles2, target_name)
+    except ImportError as e:
+        if 'st' in globals():
+            st.warning(f"⚠️ 도킹 파이프라인 모듈 로드 실패: {str(e)}")
+            st.error("❌ 실제 도킹 데이터를 사용할 수 없습니다. 시스템 관리자에게 문의하세요.")
+        raise ImportError(f"도킹 파이프라인이 필요합니다: {e}")
+    except Exception as e:
+        if 'st' in globals():
+            st.error(f"❌ 도킹 시뮬레이션 실행 오류: {str(e)}")
+        raise Exception(f"도킹 시뮬레이션 실패: {e}")
+    
+def convert_docking_results_to_context(results, smiles1, smiles2, target_name):
+    import hashlib
+    import os
+    def get_result_json_path(smiles, pdb_id, outputs_dir=None):
+        smiles_id = hashlib.md5(smiles.encode('utf-8')).hexdigest()[:8]
+        if outputs_dir is None:
+            # 기본적으로 docking_pipeline/outputs 폴더 사용
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            outputs_dir = os.path.join(current_dir, 'docking_pipeline', 'outputs')
+        return os.path.join(outputs_dir, f"pr_{smiles_id}__{pdb_id}.json")
+
+    """
+    실제 docking-pipeline 결과를 기존 shared_context 형식으로 변환
+    """
+
+    # results 대신 JSON 파일 경로를 받아서 처리하도록 변경
+    def extract_interactions_from_json(json_path):
+        import json
+        import re
+        interactions = {
+            "Hydrogenbonds": [],
+            "Hydrophobic": [],
+            "Waterbridges": [],
+            "Saltbridges": [],
+            "Halogenbonds": [],
+            "VdWContact": []
+        }
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        ifp = data.get('prolif', {}).get('ifp_dataframe', {})
+        type_map = {
+            "hydrogenbonds": "Hydrogenbonds",
+            "hydrogenbond": "Hydrogenbonds",
+            "hydrophobic": "Hydrophobic",
+            "waterbridges": "Waterbridges",
+            "saltbridges": "Saltbridges",
+            "halogenbonds": "Halogenbonds",
+            "vdwcontact": "VdWContact"
+        }
+        for key, pose_dict in ifp.items():
+            parts = key.split('|')
+            if len(parts) < 3:
+                continue
+            residue = parts[1]  # 예: "LEU210.B"
+            # residue에서 숫자+문자만 추출
+            residue_name_match = re.match(r"([A-Z]+[0-9]+)", residue)
+            residue_name = residue_name_match.group(1) if residue_name_match else residue
+            interaction_type = parts[-1].lower()
+            mapped_type = type_map.get(interaction_type, None)
+            if mapped_type and any(v for v in pose_dict.values()):
+                interactions[mapped_type].append(residue_name)
+        return interactions
+
+    # 예시: compound1, compound2 각각의 JSON 파일 경로를 받아서 처리
+    # 실제 사용 시에는 파일 경로를 인자로 전달해야 함
+    # 아래는 예시 경로
+    # 경로가 없거나 None이면 직접 생성
+    compound1_json = results.get('compound1_json')
+    compound2_json = results.get('compound2_json')
+    if not compound1_json:
+        compound1_json = get_result_json_path(smiles1, target_name)
+    if not compound2_json:
+        compound2_json = get_result_json_path(smiles2, target_name)
+    # 파일 존재 여부 체크
+    if not (os.path.exists(compound1_json) and os.path.exists(compound2_json)):
+        raise Exception(f"도킹 결과 JSON 파일을 찾을 수 없습니다: {compound1_json}, {compound2_json}")
+    import json
+    with open(compound1_json, 'r') as f1:
+        compound1_result = json.load(f1)
+    with open(compound2_json, 'r') as f2:
+        compound2_result = json.load(f2)
+
+    context_result = {
+        "compound1": {
+            "smiles": compound1_result.get('smiles', ''),
+            "pdb_id": compound1_result.get('pdb_id', ''),
+            "binding_affinity_kcal_mol": compound1_result.get('binding_affinity_kcal_mol', -7.5),
+            "interaction_fingerprint": extract_interactions_from_json(compound1_json)
+        },
+        "compound2": {
+            "smiles": compound2_result.get('smiles', ''),
+            "pdb_id": compound2_result.get('pdb_id', ''),
+            "binding_affinity_kcal_mol": compound2_result.get('binding_affinity_kcal_mol', -7.0),
+            "interaction_fingerprint": extract_interactions_from_json(compound2_json)
+        },
+        "_metadata": {
+            "data_source": "real_docking_pipeline",
+            "timestamp": time.time(),
+            "vina_version": "AutoDock Vina",
+            "prolif_analysis": "enabled",
+            "note": "실제 도킹 파이프라인 결과 사용"
+        }
+    }
+
+    # Streamlit 환경에서 성공 메시지 표시
+    if 'st' in globals():
+        st.success("🎯 실제 AutoDock Vina + ProLIF 결과를 사용합니다!")
+        
+        # 디버깅 정보 표시 (선택적)
+        with st.expander("🔍 도킹 결과 변환 디버깅 정보", expanded=False):
+            st.write("**원본 결과 구조:**")
+            st.json({
+                "compound1_keys": list(compound1_result.keys()) if compound1_result else [],
+                "compound2_keys": list(compound2_result.keys()) if compound2_result else [],
+                "prolif_structure": str(type(compound1_result.get('prolif', {}).get('ifp_dataframe'))) if compound1_result.get('prolif') else "None"
+            })
+            
+            st.write("**변환된 상호작용:**")
+            st.json({
+                "compound1_interactions": context_result["compound1"]["interaction_fingerprint"],
+                "compound2_interactions": context_result["compound2"]["interaction_fingerprint"]
+            })
+
+    return context_result
+

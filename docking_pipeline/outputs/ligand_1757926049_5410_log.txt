@@ -1,0 +1,60 @@
+AutoDock Vina v1.2.5
+#################################################################
+# If you used AutoDock Vina in your work, please cite:          #
+#                                                               #
+# J. Eberhardt, D. Santos-Martins, A. F. Tillack, and S. Forli  #
+# AutoDock Vina 1.2.0: New Docking Methods, Expanded Force      #
+# Field, and Python Bindings, J. Chem. Inf. Model. (2021)       #
+# DOI 10.1021/acs.jcim.1c00203                                  #
+#                                                               #
+# O. Trott, A. J. Olson,                                        #
+# AutoDock Vina: improving the speed and accuracy of docking    #
+# with a new scoring function, efficient optimization and       #
+# multithreading, J. Comp. Chem. (2010)                         #
+# DOI 10.1002/jcc.21334                                         #
+#                                                               #
+# Please see https://github.com/ccsb-scripps/AutoDock-Vina for  #
+# more information.                                             #
+#################################################################
+
+Scoring function : vina
+Rigid receptor: /Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/receptors/6G6K.pdbqt
+Ligand: /Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/outputs/ligand_1757926049_5410.pdbqt
+Grid center: X -59.0977 Y -42.071 Z -70.1181
+Grid size  : X 40 Y 40 Z 40
+Grid space : 0.375
+Exhaustiveness: 4
+CPU: 0
+Verbosity: 1
+
+WARNING: Search space volume is greater than 27000 Angstrom^3 (See FAQ)
+Computing Vina grid ... done.
+WARNING: At low exhaustiveness, it may be impossible to utilize all CPUs.
+Performing docking (random seed: -225095666) ... 
+0%   10   20   30   40   50   60   70   80   90   100%
+|----|----|----|----|----|----|----|----|----|----|
+***************************************************
+
+mode |   affinity | dist from best mode
+     | (kcal/mol) | rmsd l.b.| rmsd u.b.
+-----+------------+----------+----------
+   1       -7.469          0          0
+   2       -7.231      9.748      12.57
+   3       -6.994      2.853      4.177
+   4        -6.82      11.12      13.29
+   5       -6.678      2.509       4.27
+   6        -6.62       3.24      5.451
+   7       -6.348      10.94       13.2
+   8       -6.314      3.282       5.38
+   9       -6.154      3.836      5.025
+  10       -5.859      3.182      5.274
+  11       -5.689      3.181      5.678
+  12       -5.646      3.449      4.955
+  13       -5.611      4.449      6.887
+  14       -5.435      11.18      13.81
+  15       -5.352      12.86      14.56
+  16       -5.324      6.874       9.76
+  17       -5.273      10.19      12.64
+  18       -5.235      3.738      5.699
+  19       -5.212      11.21      14.29
+  20       -5.137       4.05      5.606

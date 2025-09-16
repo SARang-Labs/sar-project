@@ -33,26 +33,26 @@ from utils import (
 try:
     from online_discussion_system import run_online_discussion_system
     ONLINE_DISCUSSION_AVAILABLE = True
-    print("✅ Co-Scientist 온라인 토론 시스템 로드 성공")
+    print("✅ Co-Scientist 온라인 다각도 분석 시스템 로드 성공")
 except ImportError as e:
     ONLINE_DISCUSSION_AVAILABLE = False
-    print(f"❌ Co-Scientist 온라인 토론 시스템 로드 실패: {str(e)}")
+    print(f"❌ Co-Scientist 온라인 다각도 분석 시스템 로드 실패: {str(e)}")
 
 try:
     from llm_debate.debate.optimal_prompt_debate_manager import OptimalPromptDebateManager
     from streamlit_components.optimal_prompt_debate_interface import OptimalPromptDebateInterface
     PROMPT_SYSTEM_AVAILABLE = True
-    print("✅ 최적 프롬프트 토론 시스템 로드 성공")
+    print("✅ 최적 프롬프트 분석 시스템 로드 성공")
 except ImportError as e:
     PROMPT_SYSTEM_AVAILABLE = False
-    print(f"❌ 최적 프롬프트 토론 시스템 로드 실패: {str(e)}")
+    print(f"❌ 최적 프롬프트 분석 시스템 로드 실패: {str(e)}")
 
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="AI 기반 SAR 분석 시스템", page_icon="🧪", layout="wide")
 
 
 # --- 공통 로직 처리 헬퍼 함수 ---
-def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider, selected_patent):
+def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
     mol1 = pd.Series(cliff_data['mol_1'])
     mol2 = pd.Series(cliff_data['mol_2'])
     similarity = cliff_data['similarity']
@@ -60,7 +60,7 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
     header = f"쌍 #{idx+1} (ID: {mol1.get('ID', 'N/A')} vs {mol2.get('ID', 'N/A')}) | 유사도: {similarity:.3f}"
     
     with st.expander(header, expanded=True):
-        real_act_diff = cliff_data['activity_diff']
+        real_act_diff = cliff_data['activity_difference']
         structural_diff = cliff_data['structural_difference']
         is_stereoisomer = cliff_data['is_stereoisomer']
         mol1_props = cliff_data['mol1_properties']
@@ -115,22 +115,39 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                             hypothesis, context = generate_hypothesis_cliff(cliff_data, target_name, api_key, llm_provider, activity_col)
                         st.markdown(hypothesis)
                         if context:
-                            with st.expander("참고 문헌 정보 (RAG)"): st.json(context)
+                            with st.expander("도킹 시뮬레이션 결과"): st.json(context)
 
         elif tab_key.endswith('advanced'):
 
-         if st.button("온라인 토론 시작 및 결과 저장", key=f"disc_{idx}_{tab_key}"):
+         if st.button("분석 시작 및 결과 저장", key=f"disc_{idx}_{tab_key}"):
             if not api_key: 
                 st.warning("사이드바에서 API 키를 입력해주세요.")
             elif not ONLINE_DISCUSSION_AVAILABLE: 
-                st.error("온라인 토론 시스템 모듈을 로드할 수 없습니다.")
+                st.error("온라인 다각도 분석 시스템 모듈을 로드할 수 없습니다.")
             else:
-                with st.spinner("AI 전문가들이 토론 후 최종 리포트를 작성합니다..."):
-                    # 1. 온라인 토론 시스템 실행하여 최종 리포트 받기
-                    final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider)
+                with st.spinner("AI 전문가들이 다각도 분석 후 최종 리포트를 작성합니다..."):
+                    # 1. 온라인 다각도 분석 시스템 실행하여 최종 리포트 받기
+                    # target_name: PDB ID (도킹용), cell_line: 세포주 (실험조건용)
+                    final_report = run_online_discussion_system(cliff_data, target_name, api_key, llm_provider, cell_line)
                     
-                    st.markdown("### 전문가 토론 최종 리포트")
-                    st.json(final_report)
+                    # 도킹 시뮬레이션 결과가 있는 경우 별도 표시
+                    if isinstance(final_report, dict) and 'domain_hypotheses' in final_report:
+                        for hypothesis in final_report['domain_hypotheses']:
+                            if hypothesis.get('agent_name') == '생체분자 상호작용 전문가' and 'docking_analysis' in hypothesis:
+                                with st.expander("도킹 시뮬레이션 결과", expanded=False):
+                                    try:
+                                        from online_discussion_system import display_docking_results
+                                        display_docking_results(hypothesis['docking_analysis'], hypothesis['agent_name'])
+                                    except ImportError:
+                                        st.write("도킹 시뮬레이션 모듈을 로드할 수 없습니다.")
+                                    
+                                    with st.expander("상세 데이터 (JSON)", expanded=False):
+                                        st.json(hypothesis['docking_analysis'])
+                                break
+                    
+                    # JSON 상세 분석을 토글로 표시
+                    with st.expander("리포트 상세 결과 (JSON)", expanded=False):
+                        st.json(final_report)
 
                     # 2. utils의 함수를 호출하여 DB에 최종 리포트 저장
                     # final_report가 dict 형태일 수 있으므로, json.dumps로 텍스트 변환
@@ -145,17 +162,17 @@ def process_and_display_pair(idx, cliff_data, sim_thresh, activity_col, tab_key,
                     )
 
                     if saved_id:
-                        st.success(f"토론 리포트가 데이터베이스에 성공적으로 저장되었습니다. (Analysis ID: {saved_id})")
+                        st.success(f"분석 리포트가 데이터베이스에 성공적으로 저장되었습니다. (Analysis ID: {saved_id})")
                     else:
                         st.error("데이터베이스 저장에 실패했습니다.")
 
 
 # --- UI 렌더링 함수  ---
 
-def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
+def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
     st.info("구조적으로 유사하지만 **활성 분류(Activity)가 다른** 화합물 쌍을 탐색합니다.")
     if 'Activity' not in df.columns or not available_activity_cols:
-        st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pKi/pIC50)이 없습니다.")
+        st.error("오류: 분석에 필요한 'Activity' 또는 활성 컬럼(pIC50/pKi)이 없습니다.")
         return
     ref_activity_col = available_activity_cols[0]
 
@@ -179,6 +196,42 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
         if not pairs:
             st.warning("현재 조건에 맞는 화합물 쌍을 찾지 못했습니다. 임계값을 조절해보세요.")
         else:
+            # Activity Cliff 분포 시각화 추가
+            quantitative_plot_data = []
+            for p in pairs:
+                mol1 = df_quant_valid.iloc[p['mol1_index']]
+                mol2 = df_quant_valid.iloc[p['mol2_index']]
+                quantitative_plot_data.append({
+                    'similarity': p['similarity'],
+                    'activity_difference': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
+                    'pair_label': f"{mol1.get('ID', 'N/A')} vs {mol2.get('ID', 'N/A')}",
+                    'score': p.get('activity_category_diff', 0)
+                })
+            
+            if quantitative_plot_data:
+                plot_df_quant = pd.DataFrame(quantitative_plot_data)
+                st.markdown("#### Activity Cliff 분포 시각화")
+                fig_quant_scatter = px.scatter(
+                    plot_df_quant,
+                    x='similarity',
+                    y='activity_difference', 
+                    title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
+                    labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_difference': f'활성도 차이 (Δ{ref_activity_col})'}, 
+                    hover_data=['pair_label', 'score'],
+                    color='score',
+                    color_continuous_scale=px.colors.sequential.Viridis,
+                    size='activity_difference' 
+                )
+                fig_quant_scatter.add_shape(
+                    type="rect", xref="x", yref="y",
+                    x0=sim_thresh, y0=0, x1=1.0, 
+                    y1=plot_df_quant['activity_difference'].max() * 1.1,
+                    line=dict(color="Red", width=2, dash="dash"),
+                    fillcolor="rgba(255,0,0,0.1)"
+                )
+                st.plotly_chart(fig_quant_scatter, use_container_width=True)
+                st.markdown("---")
+            
             st.markdown("#### 상세 분석 목록")
             pair_options = [
                 f"{idx+1}. {df_quant_valid.iloc[p['mol1_index']].get('ID', 'N/A')} vs {df_quant_valid.iloc[p['mol2_index']].get('ID', 'N/A')} "
@@ -195,7 +248,7 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                     'mol_1': mol1.to_dict(),
                     'mol_2': mol2.to_dict(),
                     'similarity': pair_info['similarity'],
-                    'activity_diff': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
+                    'activity_difference': abs(mol1.get(ref_activity_col, 0) - mol2.get(ref_activity_col, 0)),
                     'structural_difference': get_structural_difference_keyword(mol1['SMILES'], mol2['SMILES']),
                     'is_stereoisomer': check_stereoisomers(mol1['SMILES'], mol2['SMILES']),
                     'mol1_properties': calculate_molecular_properties(mol1['mol']),
@@ -206,13 +259,14 @@ def render_quantitative_analysis_ui(df, available_activity_cols, tab_key, target
                 process_and_display_pair(
                     idx=selected_idx, cliff_data=cliff_data_quant, sim_thresh=sim_thresh, 
                     activity_col=ref_activity_col, tab_key=f"quantitative_{tab_key}",
-                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent
+                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent,
+                    cell_line=cell_line
                 )
 
-def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent):
+def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name, api_key, llm_provider, selected_patent, cell_line=None):
     st.info("구조가 유사하지만 **선택된 활성 값의 차이가 큰** 쌍(Activity Cliff)을 탐색합니다.")
     if not available_activity_cols:
-        st.error("오류: 분석 가능한 활성 컬럼(pKi/pIC50)이 없습니다.")
+        st.error("오류: 분석 가능한 활성 컬럼(pIC50/pKi)이 없습니다.")
         return
     selected_col = st.selectbox("분석 기준 컬럼 선택:", options=available_activity_cols, key=f'col_{tab_key}')
     with st.expander("현재 데이터 활성도 분포 보기"):
@@ -249,18 +303,18 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
             fig_scatter = px.scatter(
                 plot_df_scatter,
                 x='similarity',
-                y='activity_diff', 
+                y='activity_difference', 
                 title='Activity Cliff 분포 (우측 상단이 가장 유의미한 영역)',
-                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_diff': f'활성도 차이 (Δ{analyzed_col})'}, 
+                labels={'similarity': '구조 유사도 (Tanimoto)', 'activity_difference': f'활성도 차이 (Δ{analyzed_col})'}, 
                 hover_data=['pair_label', 'score'],
                 color='score',
                 color_continuous_scale=px.colors.sequential.Viridis,
-                size='activity_diff' 
+                size='activity_difference' 
             )
             fig_scatter.add_shape(
                 type="rect", xref="x", yref="y",
                 x0=sim_thresh, y0=act_diff_thresh, x1=1.0, 
-                y1=plot_df_scatter['activity_diff'].max() * 1.1, # <<< 여기를 수정
+                y1=plot_df_scatter['activity_difference'].max() * 1.1, # <<< 여기를 수정
                 line=dict(color="Red", width=2, dash="dash"),
                 fillcolor="rgba(255,0,0,0.1)"
             )
@@ -272,7 +326,7 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
             st.markdown("#### 상세 분석 목록")
             pair_options = [
                 f"{idx+1}. {c['mol_1'].get('ID', 'N/A')} vs {c['mol_2'].get('ID', 'N/A')} "
-                f"(유사도: {c['similarity']:.2f}, 활성차이: {c['activity_diff']:.2f})"
+                f"(유사도: {c['similarity']:.2f}, 활성차이: {c['activity_difference']:.2f})"
                 for idx, c in enumerate(cliffs)
             ]
             selected_pair_str = st.selectbox("분석할 쌍을 선택하세요:", pair_options, key=f"pair_select_{tab_key}")
@@ -282,7 +336,8 @@ def render_cliff_detection_ui(df, available_activity_cols, tab_key, target_name,
                 process_and_display_pair(
                     idx=selected_idx, cliff_data=cliff, sim_thresh=sim_thresh, 
                     activity_col=analyzed_col, tab_key=tab_key,
-                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent
+                    target_name=target_name, api_key=api_key, llm_provider=llm_provider, selected_patent=selected_patent,
+                    cell_line=cell_line
                 )
 
 
@@ -323,7 +378,7 @@ def get_targets_for_patent(patent_number):
 @st.cache_data
 def get_data_for_patent_and_target(patent_number, target_name):
     """특정 특허와 특정 타겟에 대한 데이터만 DB에서 JOIN하여 가져옵니다."""
-    if not all([patent_number, target_name]): return None
+    if not patent_number: return None  # 특허는 필수
     db: Session = SessionLocal()
     try:
         # SQLAlchemy의 read_sql_query를 사용하여 DataFrame으로 직접 변환
@@ -338,7 +393,13 @@ def get_data_for_patent_and_target(patent_number, target_name):
                 ).join(Activity, Compound.compound_id == Activity.compound_id)\
                  .join(Target, Activity.target_id == Target.target_id)\
                  .join(Patent, Activity.patent_id == Patent.patent_id)\
-                 .filter(Patent.patent_number == patent_number, Target.target_name == target_name).statement
+                 .filter(Patent.patent_number == patent_number)
+        
+        # target_name이 지정된 경우에만 타겟 필터 추가
+        if target_name:
+            query = query.filter(Target.target_name == target_name)
+        
+        query = query.statement
         df = pd.read_sql_query(query, db.bind)
         return df
     except Exception as e:
@@ -406,17 +467,16 @@ def main():
                 st.warning(f"'{selected_patent}' 특허에 대한 타겟 데이터가 없습니다.")
 
         st.header("⚙️ AI 모델 설정")
-        # target_name_input은 이제 기본값 또는 보조 용도로만 사용됩니다.
-        target_name_input = st.text_input("분석 대상 타겟 단백질 (참고용)", value=selected_target or "EGFR")
+        # 특허별 기본 타겟 단백질 PDB ID 설정
+        # 1020170094694 특허의 경우에만 6G6K를 기본값으로 사용
+        default_target_pdb = "6G6K" if selected_patent and "1020170094694" in selected_patent else ""
+        target_name_input = st.text_input("분석 대상 타겟 단백질 (PDB ID)", value=default_target_pdb, 
+                                         help="타겟 단백질의 PDB ID를 입력하세요. 예: 6G6K, 1M17, 4ZAU 등")
         llm_provider = st.selectbox("LLM 공급자 선택:", ("OpenAI", "Gemini"))
         api_key = st.text_input("API 키 입력:", type="password", placeholder="OpenAI 또는 Gemini API 키")
 
     # --- 탭 구조 정의 ---
     tab_titles = ["실시간 분석", "분석 이력 조회"]
-    
-    # 외부 시스템 가용성에 따라 동적으로 탭 추가 (기존 로직 활용)
-    # if ONLINE_DISCUSSION_AVAILABLE: tab_titles.insert(1, "SAR 분석 (토론 시스템 적용)") # 토론 시스템을 별도 탭으로 분리할 경우
-    if PROMPT_SYSTEM_AVAILABLE: tab_titles.append("최적 프롬프트 토론")
 
     created_tabs = st.tabs(tab_titles)
     tab_map = {name: tab for name, tab in zip(tab_titles, created_tabs)}
@@ -426,10 +486,11 @@ def main():
         st.header("실시간 분석 대시보드")
         df, available_activity_cols = None, []
 
-        # 특허와 타겟이 모두 선택되었을 때만 데이터 로드 및 처리를 시작합니다.
+        # 특허가 선택되고 타겟(selected_target)이 선택되었을 때 데이터 로드
+        # 타겟은 데이터 필터링용, PDB ID는 도킹 시뮬레이션용으로 각각 사용
         if selected_patent and selected_target:
-            with st.spinner(f"특허 '{selected_patent}'의 '{selected_target}' 데이터 로딩 중..."):
-                # 1. 특허와 타겟에 맞는 데이터를 DB에서 가져옵니다.
+            with st.spinner(f"특허 '{selected_patent}'의 '{selected_target}' 타겟 데이터 로딩 중..."):
+                # 1. 특허와 세포주에 맞는 데이터를 DB에서 가져옵니다.
                 df_from_db = get_data_for_patent_and_target(selected_patent, selected_target)
 
             if df_from_db is not None:
@@ -450,9 +511,9 @@ def main():
 
                     st.sidebar.success(f"총 {len(df_from_db)}개 행 중 {len(df)}개의 고유 화합물 로드 완료!")
 
-                    # 4. Activity 컬럼이 없는 경우, pKi/pIC50 기준으로 자동 생성합니다.
-                    if 'Activity' not in df.columns and any(col in df.columns for col in ['pKi', 'pIC50']):
-                        ref_col_act = 'pKi' if 'pKi' in df.columns else 'pIC50'
+                    # 4. Activity 컬럼이 없는 경우, pIC50/pKi 기준으로 자동 생성합니다.
+                    if 'Activity' not in df.columns and any(col in df.columns for col in ['pIC50', 'pKi']):
+                        ref_col_act = 'pIC50' if 'pIC50' in df.columns else 'pKi'
                         conditions = [
                             (df[ref_col_act] > 7.0),
                             (df[ref_col_act] > 5.7) & (df[ref_col_act] <= 7.0),
@@ -461,45 +522,31 @@ def main():
                         ]
                         labels = ['Highly Active', 'Moderately Active', 'Weakly Active', 'Inactive']
                         df['Activity'] = np.select(conditions, labels, default='Unclassified')
-                        st.info("Info: pKi/pIC50 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
+                        st.info("Info: pIC50/pKi 값을 기준으로 Activity 컬럼을 새로 생성했습니다.")
 
         # 최종 처리된 데이터(df)가 있을 경우에만 분석 UI를 렌더링합니다.
         if df is not None:
-            st.success(f"'{selected_target}'에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
+            st.success(f"'{selected_target}' 타겟에 대한 {len(df)}개의 화합물 데이터 분석 준비 완료!")
 
-            # '실시간 분석' 탭 내부에 세부 분석 탭들을 생성합니다.
-            tabs_to_create_inner = []
-            if ONLINE_DISCUSSION_AVAILABLE: tabs_to_create_inner.append("SAR 분석 (토론 시스템 적용)")
-            tabs_to_create_inner.append("SAR 분석 (기본)")
+            # PDB ID와 세포주 정보 검증
+            if not target_name_input:
+                st.warning("타겟 단백질 PDB ID가 입력되지 않았습니다. 도킹 시뮬레이션이 제한될 수 있습니다.")
+            
+            # 분석 함수에 전달할 정보들
+            target_protein_pdb = target_name_input  # 도킹 시뮬레이션용 PDB ID
+            cell_line_name = selected_target        # 실험 조건용 세포주
 
-            created_tabs_inner = st.tabs(tabs_to_create_inner)
-            tab_map_inner = {name: tab for name, tab in zip(tabs_to_create_inner, created_tabs_inner)}
-
-            tab_advanced = tab_map_inner.get("SAR 분석 (토론 시스템 적용)")
-            tab_basic = tab_map_inner.get("SAR 분석 (기본)")
-
-            # 분석 함수에 전달할 타겟 이름은 사이드바에서 선택된 값을 사용합니다.
-            target_name_to_use = selected_target
-
-            if tab_advanced:
-                with tab_advanced:
-                    st.subheader("구조-활성 관계 분석 (토론 시스템 적용)")
-                    analysis_type_adv = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="adv_type")
-                    st.markdown("---")
-                    if analysis_type_adv == "정량 분석":
-                        render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
-                    else:
-                        render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_name_to_use, api_key, llm_provider, selected_patent)
-
-            if tab_basic:
-                with tab_basic:
-                    st.subheader("구조-활성 관계 분석 (기본)")
-                    analysis_type_basic = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="basic_type")
-                    st.markdown("---")
-                    if analysis_type_basic == "정량 분석":
-                        render_quantitative_analysis_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
-                    else:
-                        render_cliff_detection_ui(df, available_activity_cols, 'basic', target_name_to_use, api_key, llm_provider, selected_patent)
+            # SAR 분석 UI (온라인 토론 시스템 사용 가능한 경우만 표시)
+            if ONLINE_DISCUSSION_AVAILABLE:
+                st.subheader("구조-활성 관계 분석")
+                analysis_type = st.radio("분석 유형 선택:", ("활성 절벽 탐지", "정량 분석"), horizontal=True, key="analysis_type")
+                st.markdown("---")
+                if analysis_type == "정량 분석":
+                    render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_protein_pdb, api_key, llm_provider, selected_patent, cell_line_name)
+                else:
+                    render_cliff_detection_ui(df, available_activity_cols, 'advanced', target_protein_pdb, api_key, llm_provider, selected_patent, cell_line_name)
+            else:
+                st.error("온라인 다각도 분석 시스템을 로드할 수 없습니다.")
         else:
             st.info("분석을 시작하려면 사이드바에서 특허와 타겟을 모두 선택하세요.")
 
@@ -528,7 +575,15 @@ def main():
                 except ValueError:
                     st.warning("ID는 숫자로 입력해주세요.")
 
-            st.dataframe(display_df)
+            # 테이블 표시 전에 시간을 한국 시간으로 변환
+            if not display_df.empty and 'analysis_timestamp' in display_df.columns:
+                from datetime import timedelta
+                display_df_copy = display_df.copy()
+                display_df_copy['analysis_timestamp'] = display_df_copy['analysis_timestamp'] + timedelta(hours=9)
+                display_df_copy['analysis_timestamp'] = display_df_copy['analysis_timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                st.dataframe(display_df_copy)
+            else:
+                st.dataframe(display_df)
 
             st.markdown("---")
             st.subheader("상세 정보 보기")
@@ -543,9 +598,16 @@ def main():
             if selected_analysis_id:
                 detail_data = history_df[history_df['analysis_id'] == selected_analysis_id].iloc[0]
                 
+                # UTC 시간을 한국 시간으로 변환
+                from datetime import timedelta
+                
+                # pandas Timestamp에 9시간 더하기
+                kst_time = detail_data['analysis_timestamp'] + timedelta(hours=9)
+                formatted_time = kst_time.strftime('%Y-%m-%d %H:%M:%S')
+                
                 st.json({
                     "분석 ID": detail_data['analysis_id'],
-                    "분석 시간": detail_data['analysis_timestamp'],
+                    "분석 시간": formatted_time,
                     "분석 쌍": f"ID {detail_data['compound_id_1']} vs ID {detail_data['compound_id_2']}",
                     "유사도": f"{detail_data['similarity']:.3f}" if pd.notna(detail_data['similarity']) else "N/A",
                     "활성 차이": f"{detail_data['activity_difference']:.3f}" if pd.notna(detail_data['activity_difference']) else "N/A",
@@ -562,4 +624,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

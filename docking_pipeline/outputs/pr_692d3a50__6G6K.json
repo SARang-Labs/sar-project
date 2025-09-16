@@ -1,0 +1,14 @@
+{
+    "smiles": "Cc1cc(CS(=O)c2[nH]c3c(Cl)ccc(Cl)c3c(=O)c2C(=O)C(C)C)no1",
+    "pdb_id": "6G6K",
+    "binding_affinity_kcal_mol": -7.536,
+    "prolif": {
+        "ifp_dataframe": {
+            "UNL1.L|LEU210.B|VdWContact": {
+                "0": true
+            }
+        }
+    },
+    "receptor_std_pdb": "/Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/receptors/6G6K.pdb",
+    "vina_pose_file": "/Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/outputs/ligand_1758002425_8348_out.pdbqt"
+}

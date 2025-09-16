@@ -1,0 +1,23 @@
+{
+    "smiles": "CC(=O)c1c(S(=O)Cc2cc(C)on2)[nH]c2c(Br)ccc(Cl)c2c1=O",
+    "pdb_id": "6G6K",
+    "binding_affinity_kcal_mol": -6.816,
+    "prolif": {
+        "ifp_dataframe": {
+            "UNL1.L|PRO938.C|VdWContact": {
+                "0": true
+            },
+            "UNL1.L|VAL940.C|Hydrophobic": {
+                "0": true
+            },
+            "UNL1.L|LEU210.D|VdWContact": {
+                "0": true
+            },
+            "UNL1.L|ARG214.D|VdWContact": {
+                "0": true
+            }
+        }
+    },
+    "receptor_std_pdb": "/Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/receptors/6G6K.pdb",
+    "vina_pose_file": "/Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/outputs/ligand_1758010921_8105_out.pdbqt"
+}

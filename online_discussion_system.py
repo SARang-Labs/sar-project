@@ -384,11 +384,11 @@ class BiomolecularInteractionExpert:
         {allowed_residues_text}
         {residue_rule}
         **중요 - 출력 형식 강제화:**  
-        반드시 응답 최상단에 다음 항목을 포함하세요 (LLM 응답에 반드시 포함되어야 함):
+        반드시 응답 최하단에 다음 항목을 포함하세요 (LLM 응답에 반드시 포함되어야 함):
         - 고활성 화합물 SMILES: {high_active['smiles']}
-        - 고활성 화합물 보고 pIC50: {high_active['pic50']}
+        - 고활성 화합물 pIC50: {high_active['pic50']}
         - 저활성 화합물 SMILES: {low_active['smiles']}
-        - 저활성 화합물 보고 pIC50: {low_active['pic50']}
+        - 저활성 화합물 pIC50: {low_active['pic50']}
 
         **단계별 Chain-of-Thought 분석 수행:**
         1. 단백질-리간드 결합: {target_name} 활성 부위와의 결합 방식 차이를 구체적으로 추론하세요. 반드시 위에 명시된 잔기와 상호작용만을 근거로 분석하세요.
@@ -1521,7 +1521,7 @@ def display_docking_results(docking_analysis: dict, agent_name: str):
             'VdWContact': '🟢 반데르발스 접촉',  # 새로 추가
             'Saltbridges': '🔴 염다리',
             'Halogenbonds': '🟣 할로겐 결합',
-            'Waterbridges': '💧 물다리',
+            'Waterbridges': '💧 수소다리',
             # 기존 이름들도 지원 (하위 호환성)
             'hydrogen_bonds': '🔵 수소결합',
             'hydrophobic': '🟡 소수성 상호작용',

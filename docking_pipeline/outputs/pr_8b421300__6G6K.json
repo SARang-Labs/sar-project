@@ -1,19 +1,19 @@
 {
-    "smiles": "CC(=O)c1c(S(=O)Cc2cc(C)on2)[nH]c2c(Br)ccc(Cl)c2c1=O",
+    "smiles": "CC(=O)c1c(S(=O)Cc2cccc(C#N)c2)[nH]c2c(Br)ccc(Cl)c2c1=O",
     "pdb_id": "6G6K",
-    "binding_affinity_kcal_mol": -7.068,
+    "binding_affinity_kcal_mol": -7.822,
     "prolif": {
         "ifp_dataframe": {
+            "UNL1.L|VAL941.A|Hydrophobic": {
+                "0": true
+            },
             "UNL1.L|LYS944.A|VdWContact": {
                 "0": true
             },
+            "UNL1.L|LYS945.A|VdWContact": {
+                "0": true
+            },
             "UNL1.L|PRO938.C|VdWContact": {
-                "0": true
-            },
-            "UNL1.L|VAL940.C|Hydrophobic": {
-                "0": true
-            },
-            "UNL1.L|VAL940.C|VdWContact": {
                 "0": true
             },
             "UNL1.L|LEU210.D|VdWContact": {
@@ -25,5 +25,5 @@
         }
     },
     "receptor_std_pdb": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/receptors/6G6K.pdb",
-    "vina_pose_file": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/outputs/ligand_1758084140_6578_out.pdbqt"
+    "vina_pose_file": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/outputs/ligand_1758085193_2551_out.pdbqt"
 }

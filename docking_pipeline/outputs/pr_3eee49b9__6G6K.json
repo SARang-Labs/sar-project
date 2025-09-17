@@ -1,0 +1,10 @@
+{
+    "smiles": "CC(=O)c1c(S(=O)Cc2ccccc2)[nH]c2c(Br)ccc(Cl)c2c1=O",
+    "pdb_id": "6G6K",
+    "binding_affinity_kcal_mol": -7.259,
+    "prolif": {
+        "message": "No interactions detected in poses."
+    },
+    "receptor_std_pdb": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/receptors/6G6K.pdb",
+    "vina_pose_file": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/outputs/ligand_1758085080_7778_out.pdbqt"
+}

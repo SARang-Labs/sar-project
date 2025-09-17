@@ -1,0 +1,51 @@
+AutoDock Vina v1.2.5
+#################################################################
+# If you used AutoDock Vina in your work, please cite:          #
+#                                                               #
+# J. Eberhardt, D. Santos-Martins, A. F. Tillack, and S. Forli  #
+# AutoDock Vina 1.2.0: New Docking Methods, Expanded Force      #
+# Field, and Python Bindings, J. Chem. Inf. Model. (2021)       #
+# DOI 10.1021/acs.jcim.1c00203                                  #
+#                                                               #
+# O. Trott, A. J. Olson,                                        #
+# AutoDock Vina: improving the speed and accuracy of docking    #
+# with a new scoring function, efficient optimization and       #
+# multithreading, J. Comp. Chem. (2010)                         #
+# DOI 10.1002/jcc.21334                                         #
+#                                                               #
+# Please see https://github.com/ccsb-scripps/AutoDock-Vina for  #
+# more information.                                             #
+#################################################################
+
+Scoring function : vina
+Rigid receptor: /Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/receptors/6G6K.pdbqt
+Ligand: /Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/outputs/ligand_1758084778_7121.pdbqt
+Grid center: X -59.0977 Y -42.071 Z -70.1181
+Grid size  : X 40 Y 40 Z 40
+Grid space : 0.375
+Exhaustiveness: 32
+CPU: 1
+Verbosity: 1
+
+
+
+An internal error occurred in ../../../src/lib/parse_pdbqt.cpp(69). 
+
+Please report bugs through the Issue Tracker on GitHub 
+(https://github.com/ccsb-scripps/AutoDock-Vina/issues)., so
+that this problem can be resolved. The reproducibility of the
+error may be vital, so please remember to include the following in
+your problem report:
+* the EXACT error message,
+* your version of the program,
+* the type of computer system you are running it on,
+* all command line options,
+* configuration file (if used),
+* ligand file as PDBQT,
+* receptor file as PDBQT,
+* flexible side chains file as PDBQT (if used),
+* output file as PDBQT (if any),
+* input (if possible),
+* random seed the program used (this is printed when the program starts).
+
+Thank you!

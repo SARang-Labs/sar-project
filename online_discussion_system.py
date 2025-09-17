@@ -325,118 +325,82 @@ class BiomolecularInteractionExpert:
         low_active = cliff_summary['low_activity_compound']
         metrics = cliff_summary['cliff_metrics']
         prop_diffs = cliff_summary['property_differences']
-        
-        literature_info = ""
+
+        # 실제 도킹 결과에서 interaction_fingerprint의 잔기와 상호작용을 추출
         allowed_residues = set()
-        # 도킹 결과에서 실제 상호작용한 잔기만 추출
+        interaction_details = []
         if docking_results:
-            for cmpd in ['high_active_docking', 'low_active_docking']:
-                if cmpd in docking_results and 'interactions' in docking_results[cmpd]:
-                    allowed_residues.update([k for k, v in docking_results[cmpd]['interactions'].items() if v])
-        # 문헌 정보도 도킹 결과 기반으로만 잔기 표시
-        if shared_context.get('literature_context'):
-            lit = shared_context['literature_context']
-            compound1_residues = [k for k, v in lit.get('compound1', {}).get('interaction_fingerprint', {}).items() if v and k in allowed_residues]
-            compound2_residues = [k for k, v in lit.get('compound2', {}).get('interaction_fingerprint', {}).items() if v and k in allowed_residues]
-            literature_info = f"""
-            **도킹 시뮬레이션 결과 (구조 기반 근거):**
-            - 화합물 1 결합 친화도: {lit.get('compound1', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
-            - 화합물 2 결합 친화도: {lit.get('compound2', {}).get('binding_affinity_kcal_mol', 'N/A')} kcal/mol
-            - 화합물 1 주요 상호작용: {', '.join(compound1_residues)}
-            - 화합물 2 주요 상호작용: {', '.join(compound2_residues)}
-            - 이 도킹 결과를 근거로 구조적 차이가 활성 차이로 이어지는 메커니즘을 분석하세요.
-            """
-        # 프롬프트 내 잔기 언급 제한 안내 추가
+            for cmpd_key in ['high_active_docking', 'low_active_docking', 'compound1', 'compound2']:
+                cmpd = docking_results.get(cmpd_key)
+                if cmpd and 'interaction_fingerprint' in cmpd:
+                    for interaction_type, residues in cmpd['interaction_fingerprint'].items():
+                        if residues:
+                            if isinstance(residues, list):
+                                allowed_residues.update(residues)
+                                interaction_details.append(f"- {interaction_type}: {', '.join(residues)}")
+                            elif isinstance(residues, bool) and residues:
+                                allowed_residues.add(interaction_type)
+                                interaction_details.append(f"- {interaction_type}: 검출됨")
+        allowed_residues_text = f"""
+        **도킹 결과에서 실제로 검출된 상호작용 잔기(아래 잔기만 언급 가능):**
+        - {', '.join(sorted(allowed_residues)) if allowed_residues else '검출된 잔기 없음'}
+        **아래 잔기 외에는 절대 언급 금지!**
+        """
+        interaction_details_text = "\n".join(interaction_details) if interaction_details else "상호작용 정보 없음"
+
         residue_rule = """
         **중요 규칙: 리포트에 언급되는 모든 아미노산 잔기 정보는 반드시 도킹 결과에서 실제로 추출된 잔기만 사용해야 하며, 외부 문헌이나 임의 추론을 통한 잔기 추가는 절대 금지됩니다. 만약 도킹 결과에 없는 잔기가 언급될 경우, 해당 내용은 자동으로 삭제 또는 무시됩니다.**
         """
-        
+
         # Few-Shot 예시 (단백질-리간드 상호작용 사례)
         few_shot_example = """
         **Few-Shot 예시 - 전문가 분석 과정 참조:**
-        
         [예시] EGFR 키나제 억제제 Activity Cliff 분석:
         화합물 A: 게피티니브 (pIC50: 7.8) vs 화합물 B: 엘로티니브 (pIC50: 8.5)
-        
         1. 단백질-리간드 결합: 퀴나졸린 코어의 6,7위치 치환기 차이가 ATP 결합 포켓과의 상호작용 패턴 변화
         2. 상호작용 패턴: 엘로티니브의 아세틸렌 링커가 Cys797과 새로운 소수성 접촉 형성
         3. 결합 기하학: 추가 아로마틱 고리가 DFG 루프와의 π-π 스택킹 개선
         4. 약리학적 메커니즘: 향상된 결합 기하학으로 0.7 pIC50 단위 친화도 증가
         5. ADMET 영향: CYP3A4 대사 안정성 개선, 반감기 연장
-        
         [귀하의 분석 과제]
         """
-        
+
         return f"""
-        당신은 단백질-리간드 상호작용 메커니즘 분야의 세계적 권위자입니다. 타겟 단백질과의 결합 방식 변화, 약리학적 관점과 생리활성 메커니즘 규명을 전문으로 하는 선임 연구자로서, 실제 신약 개발에서 사용되는 체계적 분석을 수행해주세요.
+        당신은 단백질-리간드 상호작용 메커니즘 분야의 세계적 권위자입니다. 실제 도킹 결과에서 검출된 상호작용 잔기와 상호작용 타입만을 근거로 분석하세요.
 
         {few_shot_example}
 
         **Activity Cliff 분석 대상:**
-
-        **실험 조건:**
         - 타겟 단백질: {target_name} (PDB ID)
         {f"- 측정 세포주: {shared_context.get('cell_line_context', {}).get('cell_line_name', 'Unknown')}" if shared_context.get('cell_line_context') else ""}
-
-        **화합물 정보:**
         - 고활성 화합물: {high_active['id']} (pIC50: {high_active['pic50']})
-            SMILES: {high_active['smiles']}
+          SMILES: {high_active['smiles']}
         - 저활성 화합물: {low_active['id']} (pIC50: {low_active['pic50']})
-            SMILES: {low_active['smiles']}
+          SMILES: {low_active['smiles']}
 
-        **In-Context 생화학적 특성 (할루시네이션 방지용):**
-        - 활성도 차이: {metrics['activity_difference']} pIC50 단위
-        - 구조 유사도: {metrics['similarity']:.3f} (Tanimoto)
-        - 분자량 차이: {prop_diffs['mw_diff']:.2f} Da
-        - LogP 차이: {prop_diffs['logp_diff']:.2f}
-        - TPSA 차이: {prop_diffs.get('tpsa_diff', 0):.2f} Ų
-        - 수소결합 공여자/수용자 변화 예상
+        **도킹 시뮬레이션 상호작용 정보:**  
+        {interaction_details_text}
 
-        {literature_info}
-
-        {self._format_docking_results(docking_results) if docking_results else ""}
-
+        {allowed_residues_text}
         {residue_rule}
+        **중요 - 출력 형식 강제화:**  
+        반드시 응답 최상단에 다음 항목을 포함하세요 (LLM 응답에 반드시 포함되어야 함):
+        - 고활성 화합물 SMILES: {high_active['smiles']}
+        - 고활성 화합물 보고 pIC50: {high_active['pic50']}
+        - 저활성 화합물 SMILES: {low_active['smiles']}
+        - 저활성 화합물 보고 pIC50: {low_active['pic50']}
 
         **단계별 Chain-of-Thought 분석 수행:**
-        실제 구조생물학자/약리학자가 사용하는 분석 절차를 따라 다음 5단계로 체계적으로 분석하세요:
+        1. 단백질-리간드 결합: {target_name} 활성 부위와의 결합 방식 차이를 구체적으로 추론하세요. 반드시 위에 명시된 잔기와 상호작용만을 근거로 분석하세요.
+        2. 상호작용 패턴: 수소결합, 소수성 상호작용, π-π 스택킹, 반데르발스 힘 등의 변화가 어떻게 활성에 영향을 미치는지 설명하세요.
+        3. 결합 기하학: 분자 형태 변화가 단백질 포켓과의 입체적 적합성(shape complementarity)에 미치는 영향을 3차원 관점에서 분석하세요.
+        4. 약리학적 메커니즘: 결합 친화도 변화가 어떻게 기능적 활성 변화로 이어지는지, 알로스테릭 효과나 결합 동역학적 요인을 포함하여 설명하세요.
+        5. ADMET 영향: 구조 변화가 대사 안정성, 선택성, 투과성 등에 미치는 영향과 전체적인 약물성에 대한 함의를 분석하세요.
 
-        1. **단백질-리간드 결합**: {target_name} 활성 부위와의 결합 방식 차이를 구체적으로 추론하세요. 알려진 단백질 구조 정보와 결합 포켓 특성을 고려하여 분석하세요.
-
-        2. **상호작용 패턴**: 수소결합, 소수성 상호작용, π-π 스택킹, 반데르발스 힘 등의 변화가 어떻게 활성에 영향을 미치는지 설명하세요.
-
-        3. **결합 기하학**: 분자 형태 변화가 단백질 포켓과의 입체적 적합성(shape complementarity)에 미치는 영향을 3차원 관점에서 분석하세요.
-
-        4. **약리학적 메커니즘**: 결합 친화도 변화가 어떻게 기능적 활성 변화로 이어지는지, 알로스테릭 효과나 결합 동역학적 요인을 포함하여 설명하세요.
-
-        5. **ADMET 영향**: 구조 변화가 대사 안정성, 선택성, 투과성 등에 미치는 영향과 전체적인 약물성에 대한 함의를 분석하세요.
-
-        **필수 요구사항 - 구조생물학 전문가 수준:**
-        1. 특정 아미노산 잔기 번호 명시 (단, 반드시 도킹 결과에서 실제로 추출된 잔기만 사용)
-        2. 결합 친화도 값 계산 (Kd, Ki 값 또는 비율)
-        3. 상호작용 에너지 정량화 (-5.2 kcal/mol 등)
-        4. 도킹 스코어 비교와 RMSD 값
-        5. 선택성 비율 예측 (vs off-target)
-
-        **금지 사항 - 일반적 메커니즘 설명 금지:**
-        - "수소결합이 중요하다" → "구체적 수소결합 길이와 위치"
-        - "소수성 상호작용" → "특정 소수성 잔기와의 접촉 면적"
-        - "활성이 감소한다" → "IC50 값 15배 증가" 등
-
-        **실제 구조생물학 연구에서 사용할 수 있는 구체적 데이터와 메커니즘을 제시하세요.**
-
-        **결과 형식 (반드시 이 형식을 정확히 따르세요):**
-
-        핵심 가설: [구체적이고 전문적인 메커니즘, 예: "LEU210.D과의 소수성 결합으로 인한 결합 친화도 증가가 주요 원인"]
-
-        상세 분석:
-        1. 단백질-리간드 결합: [특정 결합 포켓, 잔기 번호, 상호작용 유형 명시]
-        2. 상호작용 패턴: [수소결합 길이, 소수성 접촉 면적의 구체적 변화]
-        3. 결합 기하학: [RMSD, 결합각, 비틀림각의 정량적 분석]
-        4. 약리학적 메커니즘: [결합 기전 해석, 선택성 차이 원인 분석]
-        5. ADMET 영향: [대사 패턴 차이, 약동학적 특성 변화 해석]
-
-        분자 설계 제안: [특정 치환기 도입 전략 - pIC50 예측값 언급 금지]
+        **필수 요구사항:**  
+        - 반드시 도킹 결과에서 검출된 잔기와 상호작용만 언급  
+        - 그 외 잔기/상호작용은 절대 언급 금지  
+        - 구체적 수치, 결합 친화도, 상호작용 타입, 잔기 번호 명시
 
         {ANTI_HALLUCINATION_GUIDELINES}
         - 제공된 실제 데이터만을 근거로 정성적 메커니즘 해석
@@ -706,10 +670,12 @@ class HypothesisEvaluationExpert:
             cliff_info = f"""
     **Activity Cliff 분석 대상:**
     - 타겟 단백질: {target_name} (PDB ID){cell_line_info}
-    - 고활성 화합물: {high_comp.get('id', 'N/A')} (pIC50: {high_comp.get('pki', 'N/A')})
-    - 저활성 화합물: {low_comp.get('id', 'N/A')} (pIC50: {low_comp.get('pki', 'N/A')})
+    - 고활성 화합물: {high_comp.get('id', 'N/A')} (pIC50: {high_comp.get('pic50', 'N/A')})
+      SMILES: {high_comp.get('smiles', 'N/A')}
+    - 저활성 화합물: {low_comp.get('id', 'N/A')} (pIC50: {low_comp.get('pic50', 'N/A')})
+      SMILES: {low_comp.get('smiles', 'N/A')}
     - 활성도 차이: {metrics.get('activity_difference', 'N/A')}
-    - 구조 유사도: {metrics.get('structural_similarity', 'N/A')}"""
+    - 구조 유사도: {metrics.get('similarity', 'N/A')}"""
         
         # 문헌 정보 구성
         literature_info = ""
@@ -735,7 +701,7 @@ class HypothesisEvaluationExpert:
     **평가 기준 (가중치 적용):**
     1. **MMP 재검증 (40%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pIC50/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
     2. **SAR 분석 (40%)**: 구조 변화 → 메커니즘 → 활성 변화의 논리가 타당한지, 제시한 메커니즘이 화학적으로 합리적인지, 구체적 분석인지 평가  
-    3. **타겟 특이성 (20%)**: {target_name} 타겟 단백질 특이적 언급{f", {cell_line_context.get('cell_line_name')} 세포주 특성 고려" if cell_line_context.get('cell_line_name') else ""}, kinase domain/binding site 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
+    3. **타겟 특이성 (20%)**: {target_name} 타겟 단백질 특이적 언급, kinase domain/binding site/리간드/포켓 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
     
     **핵심 질문**: 구조적으로 유사한 두 화합물이 {metrics.get('activity_difference', 'N/A')} pIC50 차이를 보이는 구조 활성 차이의 원인은 무엇인가?
     

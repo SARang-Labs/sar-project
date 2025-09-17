@@ -1,14 +1,17 @@
 {
     "smiles": "Cc1cc(CS(=O)c2[nH]c3c(Br)ccc(Cl)c3c(=O)c2C(=O)C2CC2)no1",
     "pdb_id": "6G6K",
-    "binding_affinity_kcal_mol": -7.693,
+    "binding_affinity_kcal_mol": -7.532,
     "prolif": {
         "ifp_dataframe": {
-            "UNL1.L|ARG214.D|VdWContact": {
+            "UNL1.L|LEU210.B|VdWContact": {
+                "0": true
+            },
+            "UNL1.L|ARG214.B|VdWContact": {
                 "0": true
             }
         }
     },
-    "receptor_std_pdb": "/Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/receptors/6G6K.pdb",
-    "vina_pose_file": "/Users/lionkim/Desktop/sar-project-jr-prompt-debate-online 2/docking_pipeline/outputs/ligand_1758010965_3785_out.pdbqt"
+    "receptor_std_pdb": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/receptors/6G6K.pdb",
+    "vina_pose_file": "/Users/lionkim/Desktop/debate_app/sar-project/docking_pipeline/outputs/ligand_1758083302_9471_out.pdbqt"
 }

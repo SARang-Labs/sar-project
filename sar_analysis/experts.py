@@ -320,15 +320,17 @@ class BiomolecularInteractionExpert:
 
     def generate(self, shared_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        생체분자 상호작용 관점의 가설 생성 (도킹 시뮬레이션 포함)
+        생체분자 상호작용 관점의 가설 생성
 
         Activity Cliff 쌍에 대해 생체분자 상호작용 관점에서 활성도 차이를 설명하는
-        가설을 생성합니다. 도킹 시뮬레이션을 수행하여 결합 방식의 차이를 분석합니다.
+        가설을 생성합니다. 분자 구조의 차이점과 그것이 생물학적 활성에
+        미치는 영향을 분석합니다.
 
         Args:
             shared_context (Dict[str, Any]): 공유 컨텍스트 정보
                 - cliff_summary: Activity Cliff 쌍 정보
                 - target_name: 타겟 단백질명
+                - literature_context: 도킹 시뮬레이션 결과 (선택적)
 
         Returns:
             Dict[str, Any]: 전문가 분석 결과
@@ -337,77 +339,21 @@ class BiomolecularInteractionExpert:
                 - hypothesis: 생성된 가설
                 - key_insights: 핵심 인사이트
                 - reasoning_steps: 추론 단계
-                - docking_analysis: 도킹 분석 결과
                 - timestamp: 생성 시간
         """
-        
-        # 도킹 시뮬레이션 수행
-        docking_results = self._perform_docking_analysis(shared_context)
-        
-        # 도킹 결과를 포함한 프롬프트 생성
-        prompt = self._build_interaction_prompt(shared_context, docking_results)
+        prompt = self._build_interaction_prompt(shared_context)
         hypothesis = self.llm_client.generate_response(self.persona, prompt, temperature=0.7)
-        
+
         return {
             'agent_type': 'biomolecular_interaction',
             'agent_name': '생체분자 상호작용 전문가',
             'hypothesis': hypothesis,
             'key_insights': self._extract_key_insights(hypothesis),
             'reasoning_steps': self._extract_reasoning_steps(hypothesis),
-            'docking_analysis': docking_results,  # 도킹 분석 결과 포함
             'timestamp': time.time()
         }
     
-    def _perform_docking_analysis(self, shared_context: Dict[str, Any]) -> Dict:
-        """도킹 시뮬레이션 수행"""
-        cliff_summary = shared_context.get('cliff_summary', {})
-        target_name = shared_context.get('target_name', 'EGFR')
-        
-        high_active = cliff_summary.get('high_activity_compound', {})
-        low_active = cliff_summary.get('low_activity_compound', {})
-        
-        if high_active.get('smiles') and low_active.get('smiles'):
-            # utils.py의 get_docking_context 함수 사용
-            from utils import get_docking_context
-            docking_results = get_docking_context(
-                high_active['smiles'],
-                low_active['smiles'],
-                target_name
-            )
-            
-            # compound1과 compound2가 None이 아닌지 확인
-            if (docking_results and
-                docking_results.get('compound1') is not None and
-                docking_results.get('compound2') is not None):
-
-                # 결과를 기존 형식으로 변환
-                results = {
-                    'high_active_docking': {
-                        'binding_affinity': docking_results['compound1']['binding_affinity_kcal_mol'],
-                        'interactions': docking_results['compound1']['interaction_fingerprint']
-                    },
-                    'low_active_docking': {
-                        'binding_affinity': docking_results['compound2']['binding_affinity_kcal_mol'],
-                        'interactions': docking_results['compound2']['interaction_fingerprint']
-                    }
-                }
-
-                # 비교 분석
-                high_score = results['high_active_docking']['binding_affinity']
-                low_score = results['low_active_docking']['binding_affinity']
-                results['comparative_analysis'] = {
-                    'affinity_difference': high_score - low_score,
-                    'supports_activity_cliff': high_score < low_score  # 낮은 값이 더 강한 결합
-                }
-
-                return results
-            else:
-                # 도킹 결과가 없는 경우
-                return None
-        
-        return {}
-    
-    def _build_interaction_prompt(self, shared_context: Dict[str, Any], docking_results: Dict = None) -> str:
+    def _build_interaction_prompt(self, shared_context: Dict[str, Any]) -> str:
         """생체분자 상호작용 전문가용 특화 프롬프트 생성 - CoT.md 지침 반영"""
         cliff_summary = shared_context['cliff_summary']
         target_name = shared_context['target_name']
@@ -477,8 +423,6 @@ class BiomolecularInteractionExpert:
         
         {literature_info}
         
-        {self._format_docking_results(docking_results) if docking_results else ""}
-        
         **단계별 Chain-of-Thought 분석 수행:**
         실제 구조생물학자/약리학자가 사용하는 분석 절차를 따라 다음 5단계로 체계적으로 분석하세요:
         
@@ -524,31 +468,6 @@ class BiomolecularInteractionExpert:
 
         **중요: 신약개발 전문가가 이미 알고 있는 뻔한 내용은 제외하고, 깊이 있는 약물화학적 분석에 집중하세요. 결합 패턴, 상호작용 유형, 특정 아미노산 잔기와의 관계를 포함한 정성적 분석을 제시하되 예상 pIC50 값은 언급하지 마세요.**
         """
-    
-    def _format_docking_results(self, docking_results: Dict) -> str:
-        """도킹 시뮬레이션 결과를 프롬프트용 텍스트로 포맷팅"""
-        if not docking_results:
-            return ""
-        
-        formatted = "\n**도킹 시뮬레이션 결과:**\n"
-        
-        if 'high_active_docking' in docking_results:
-            high = docking_results['high_active_docking']
-            formatted += f"- 고활성 화합물: 결합 친화도 {high['binding_affinity']:.1f} kcal/mol\n"
-        
-        if 'low_active_docking' in docking_results:
-            low = docking_results['low_active_docking']
-            formatted += f"- 저활성 화합물: 결합 친화도 {low['binding_affinity']:.1f} kcal/mol\n"
-        
-        if 'comparative_analysis' in docking_results:
-            comp = docking_results['comparative_analysis']
-            formatted += f"- 친화도 차이: {comp['affinity_difference']:.1f} kcal/mol\n"
-            if comp['supports_activity_cliff']:
-                formatted += "- 도킹 결과는 실험적 Activity Cliff를 지지합니다.\n"
-            else:
-                formatted += "- 도킹 결과는 실험 데이터와 상이한 경향을 보입니다 (추가 분석 필요).\n"
-        
-        return formatted
     
     
     def _extract_key_insights(self, hypothesis: str) -> List[str]:

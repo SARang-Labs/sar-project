@@ -182,8 +182,28 @@ experiment_results/*.json
 llm_debate/logs/*
 !llm_debate/logs/.gitkeep
 
+# Docking simulation outputs
+*.pdbqt
+*.pdb
+docking_pipeline/outputs/*
+!docking_pipeline/outputs/.gitkeep
+
+# Database files (자동 생성됨)
+*.db
+patent_etl_pipeline/database/
+patent_etl_pipeline/data/
+
+# Temporary molecular files
+*.sdf
+*_log.txt
+*_out.*
+
+# JSON output files (결과 파일들)
+**/outputs/*.json
+
 # Documentation - internal analysis files
 docs/
 docs2/
+docs3/
 archive_docs/
 app_old.py

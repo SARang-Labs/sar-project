@@ -8,4 +8,11 @@ requests
 seaborn
 plotly
 openai
-Chem
+langgraph
+langchain
+langchain-openai
+langchain-google-genai
+typing-extensions
+pydantic
+futurehouse-client
+prolif

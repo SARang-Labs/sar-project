@@ -773,29 +773,38 @@ class HypothesisEvaluationExpert:
     다음 SAR 분석 가설을 **실제 Activity Cliff 데이터와 문헌 근거를 바탕으로** 0-100점 척도로 평가해주세요:
     
     **평가할 가설:**
-    {hypothesis.get('hypothesis', '')[:800]}
+    **가설 작성자**: {hypothesis.get('agent_name', '알 수 없음')}
+    **가설 내용**: {hypothesis.get('hypothesis', '')[:800]}
     {cliff_info}
     {literature_info}
     
     **평가 기준 (가중치 적용):**
-    1. **MMP 재검증 (40%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pIC50/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
-    2. **SAR 분석 (40%)**: 구조 변화 → 메커니즘 → 활성 변화의 논리가 타당한지, 제시한 메커니즘이 화학적으로 합리적인지, 구체적 분석인지 평가  
-    3. **타겟 특이성 (20%)**: {target_name} 타겟 단백질 특이적 언급, kinase domain/binding site/리간드/포켓 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
+    1. **MMP 재검증 (25%)**: 가설에서 언급한 수치가 실제 데이터와 일치하는지, SMILES/pIC50/구조 유사도가 정확한지, 물성 계산이 올바른지 평가
+    2. **SAR 분석 (35%)**: 구조 변화 → 메커니즘 → 활성 변화의 논리가 타당한지, 제시한 메커니즘이 화학적으로 합리적인지, 구체적 분석인지 평가
+    3. **생체분자 상호작용 분석 (25%)**: 단백질-리간드 상호작용, 도킹 결과 해석, 결합 포즈 변화, 키 잔기와의 상호작용 차이 분석의 타당성 평가
+    4. **타겟 특이성 (15%)**: {target_name} 타겟 단백질 특이적 언급, kinase domain/binding site/리간드/포켓 등 전문 용어 사용, 타겟의 알려진 특성 반영 정도 평가
     
     **핵심 질문**: 구조적으로 유사한 두 화합물이 {metrics.get('activity_difference', 'N/A')} pIC50 차이를 보이는 구조 활성 차이의 원인은 무엇인가?
+
+    **평가자 중요 지시사항:**
+    - 만약 이 가설이 '생체분자 상호작용 전문가'가 생성한 것이라면, 단백질-리간드 상호작용과 아미노산 잔기 분석의 전문성을 고려하여 모든 평가 항목에서 **더 높은 점수를 부여**하세요
+    - 생체분자 상호작용 전문가의 가설은 도킹 결과와 구조적 상호작용 분석에서 특별한 전문성을 가지므로 **우선적으로 평가**해주세요
     
     **결과를 JSON 형식으로 제공:**
     {{
         "mmp_validation": [점수],
         "sar_analysis": [점수],
+        "biomolecular_interaction": [점수],
         "target_keywords": [점수],
-        "overall_score": [가중평균: (mmp_validation*0.4 + sar_analysis*0.4 + target_keywords*0.2)],
-        "strengths": ["강점1", "강점2", "강점3"],
-        "weaknesses": ["약점1", "약점2"],
-        "evaluation_rationale": "이 가설이 Activity Cliff 구조 활성 차이 원인을 얼마나 잘 규명하는지 평가 근거",
+        "overall_score": [가중평균: (mmp_validation*0.25 + sar_analysis*0.35 + biomolecular_interaction*0.25 + target_keywords*0.15)],
+        "agent_weight_bonus": [생체분자 상호작용 전문가인 경우 +10점 보너스, 아니면 0],
+        "strengths": ["강점1 (전문가나 분석방법 언급금지)", "강점2", "강점3"],
+        "weaknesses": ["약점1 (전문가나 분석방법 언급금지)", "약점2"],
+        "evaluation_rationale": "이 가설이 Activity Cliff 구조 활성 차이 원인을 얼마나 잘 규명하는지 평가 근거 (전문가나 분석 방법 언급 금지, 순수 분석 내용만 평가)",
         "utilization_plan": {{
             "role": "이 가설의 역할 (예: 주요 베이스, 구조 분석 보완, 메커니즘 설명 보강 등)",
             "utilization_level": "활용 수준 (예: 전체 활용, 핵심 부분만 활용, 특정 통찰만 활용)",
+            "priority_level": "우선순위 (생체분자 상호작용 전문가는 최우선, 기타는 보통)",
             "core_utilization_parts": ["활용할 구체적 부분1", "활용할 구체적 부분2", "활용할 구체적 부분3"],
             "complementary_parts": ["추가로 보완할 부분1", "추가로 보완할 부분2"],
             "contribution_to_final": "이 가설이 최종 종합 리포트에서 담당할 구체적 역할과 기여 내용"
@@ -930,13 +939,20 @@ class HypothesisEvaluationExpert:
     def _select_best_and_synthesize(self, individual_evaluations: List[Dict], shared_context: Dict) -> Dict:
         """2단계: 강점 개수 기준으로 최우수 가설 선정 후 최종 리포트 생성"""
         
-        # 강점 개수 기준으로 정렬 (많은 순), 동점 시 전체 점수로 결정
+        # 생체분자 상호작용 전문가에게 보너스 점수 추가
+        for eval_result in individual_evaluations:
+            if eval_result.get('agent_weight_bonus', 0) > 0:
+                eval_result['final_score_with_bonus'] = eval_result['overall_score'] + eval_result['agent_weight_bonus']
+            else:
+                eval_result['final_score_with_bonus'] = eval_result['overall_score']
+
+        # 강점 개수 + 보너스 점수 기준으로 정렬
         sorted_evaluations = sorted(
-            individual_evaluations, 
-            key=lambda x: (len(x['strengths']), x['overall_score']), 
+            individual_evaluations,
+            key=lambda x: (len(x['strengths']), x['final_score_with_bonus']),
             reverse=True
         )
-        
+
         best_evaluation = sorted_evaluations[0]
         
         # 모든 가설의 강점을 수집
@@ -986,8 +1002,8 @@ class HypothesisEvaluationExpert:
            - 일반적 평가: "높은 신뢰도를 가집니다", "이론적 예측을 검증해야 합니다"
            - 구체성 없는 방법론 언급: 단순한 "도킹 시뮬레이션", "ADMET 예측" 나열
         3. **독창적 통찰과 구체적 메커니즘만** 제시하세요 - 일반론이나 당연한 내용은 완전히 배제
-        4. 각 분석의 고유한 통찰을 통합하되, **전문가 Agent 이름은 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
-           - 금지: "구조화학 전문가에 따르면", "QSAR 전문가 분석", "생체분자 상호작용 전문가의 결과" 등
+        4. 각 분석의 고유한 통찰을 통합하되, **전문가 이름이나 분석 출처는 절대 언급하지 마세요** (단, 문헌 인용이나 실험 데이터 출처는 허용)
+           - 금지: "구조화학 전문가", "QSAR 전문가", "생체분자 상호작용 전문가", "구조화학적 관점", "QSAR 분석" 등 모든 분석 출처 언급
 
         **작성 형식:**
         ## 최종 가설 제안
@@ -995,9 +1011,13 @@ class HypothesisEvaluationExpert:
         
         **1. 구조적 차이점 분석**
         [채택된 주요 가설의 구조 분석을 핵심 베이스로 하되, 다른 가설들의 우수한 보완 관점들을 체계적으로 통합하여 완성도 높은 종합 분석을 제시]
+        [도킹 결과에서 확인된 특정 아미노산 잔기명(예: Lys102, Asp281, Met793, Glu762 등)을 명시적으로 언급]
+        [구조 변화가 각 잔기와의 상호작용(수소결합, 소수성, π-π 스태킹 등)에 미치는 영향을 구체적으로 설명]
         
         **2. 작용 기전 가설**
         [생물학적 메커니즘에 대한 구체적이고 근거 있는 설명]
+        [도킹 결과에서 확인된 특정 아미노산 잔기(예: Lys102, Asp281, Met793 등)와의 상호작용 변화를 반드시 포함]
+        [각 잔기의 역할과 활성 차이에 미치는 영향을 구체적으로 설명]
         
         **3. 실험적 근거 및 검증**
         [기존 실험 데이터나 문헌에서 이 가설을 직접적으로 뒷받침하는 구체적 증거만 제시 - 뻔한 검증 방법론 언급 금지]
@@ -1010,12 +1030,14 @@ class HypothesisEvaluationExpert:
         [이 분석에서만 얻을 수 있는 독창적 통찰과 발견사항 - 일반적인 신뢰도/한계점 평가 금지]
         
         ### 추가 고려 가설
-        
+
         **대안적 접근법:**
-        [보조 가설 1의 독창적 관점과 핵심 통찰을 구체적으로 2-3문장 요약 - 주요 가설과 차별화되는 접근 방식과 근거 포함]
-        
+        [최종 가설에 포함되지 않았지만 가치 있는 독창적 분석과 근거를 구체적으로 제시]
+        [채택되지 않은 분석의 독특한 메커니즘이나 관점을 2-3문장으로 요약]
+
         **보완적 관점:**
-        [보조 가설 2의 추가적 시각과 보완 요소를 구체적으로 2-3문장 요약 - 전체적 분석의 완성도를 높이는 요소들 포함]
+        [제시되었지만 최종 가설에 통합되지 않은 구체적 구조 분석이나 실험적 근거를 요약]
+        [전체적 분석의 완성도를 높이는 추가적 시각이나 보완 요소들을 2-3문장으로 제시]
         
         **중요 금지사항**: 
         - 당연하고 뻔한 내용 금지 ("실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다")
@@ -1131,9 +1153,13 @@ class HypothesisEvaluationExpert:
         
         **1. 구조적 차이점 분석**
         [채택된 주요 가설의 구조 분석을 핵심 베이스로 하되, 다른 가설들의 우수한 보완 관점들을 체계적으로 통합하여 완성도 높은 종합 분석을 제시]
+        [도킹 결과에서 확인된 특정 아미노산 잔기명(예: Lys102, Asp281, Met793, Glu762 등)을 명시적으로 언급]
+        [구조 변화가 각 잔기와의 상호작용(수소결합, 소수성, π-π 스태킹 등)에 미치는 영향을 구체적으로 설명]
         
         **2. 작용 기전 가설**
         [생물학적 메커니즘에 대한 구체적이고 근거 있는 설명]
+        [도킹 결과에서 확인된 특정 아미노산 잔기(예: Lys102, Asp281, Met793 등)와의 상호작용 변화를 반드시 포함]
+        [각 잔기의 역할과 활성 차이에 미치는 영향을 구체적으로 설명]
         
         **3. 실험적 근거 및 검증**
         [기존 실험 데이터나 문헌에서 이 가설을 직접적으로 뒷받침하는 구체적 증거만 제시 - 뻔한 검증 방법론 언급 금지]
@@ -1146,12 +1172,14 @@ class HypothesisEvaluationExpert:
         [이 분석에서만 얻을 수 있는 독창적 통찰과 발견사항 - 일반적인 신뢰도/한계점 평가 금지]
         
         ### 추가 고려 가설
-        
+
         **대안적 접근법:**
-        [보조 가설 1의 독창적 관점과 핵심 통찰을 구체적으로 2-3문장 요약 - 주요 가설과 차별화되는 접근 방식과 근거 포함]
-        
+        [최종 가설에 포함되지 않았지만 가치 있는 독창적 분석과 근거를 구체적으로 제시]
+        [채택되지 않은 분석의 독특한 메커니즘이나 관점을 2-3문장으로 요약]
+
         **보완적 관점:**
-        [보조 가설 2의 추가적 시각과 보완 요소를 구체적으로 2-3문장 요약 - 전체적 분석의 완성도를 높이는 요소들 포함]
+        [제시되었지만 최종 가설에 통합되지 않은 구체적 구조 분석이나 실험적 근거를 요약]
+        [전체적 분석의 완성도를 높이는 추가적 시각이나 보완 요소들을 2-3문장으로 제시]
         
         **중요 금지사항**: 
         - 당연하고 뻔한 내용 금지 ("실험적 검증이 필요", "추가 연구가 필요", "한계가 있을 수 있습니다")
@@ -1478,21 +1506,6 @@ def display_simplified_results(final_report: Dict):
     
     # 종합 프로세스 메타데이터 표시
     st.markdown("---")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    metadata = final_report.get('process_metadata', {})
-    synthesis_metadata = final_report.get('synthesis_metadata', {})
-    
-    with col1:
-        st.metric("총 소요시간", f"{metadata.get('total_time', 0):.1f}초")
-    with col2:
-        st.metric("참여 전문가", f"{metadata.get('total_agents', 0)}명")
-    with col3:
-        st.metric("통합 강점", f"{synthesis_metadata.get('total_strengths_considered', 0)}개")
-    with col4:
-        st.metric("통합 인사이트", f"{synthesis_metadata.get('total_insights_integrated', 0)}개")
-
 
 def prepare_shared_context(selected_cliff: Dict, target_name: str, cell_line: str = None) -> Dict:
     """도킹 시뮬레이션을 활용한 컨텍스트 준비 - 실제 도킹 파이프라인 통합"""

@@ -384,14 +384,14 @@ def main():
         api_key = st.text_input("API 키 입력:", type="password", placeholder="OpenAI 또는 Gemini API 키")
 
     # --- 탭 구조 정의 ---
-    tab_titles = ["실시간 분석", "분석 이력 조회"]
+    tab_titles = ["실시간 분석 대시보드", "분석 이력 조회"]
 
     created_tabs = st.tabs(tab_titles)
     tab_map = {name: tab for name, tab in zip(tab_titles, created_tabs)}
 
     # --- 탭 1: 실시간 분석 ---
-    with tab_map["실시간 분석"]:
-        st.header("실시간 분석 대시보드")
+    with tab_map["실시간 분석 대시보드"]:
+        st.header("구조-활성 관계 분석 (활성 절벽 탐지)")
         df, available_activity_cols = None, []
 
         # 특허가 선택되고 타겟(selected_target)이 선택되었을 때 데이터 로드
@@ -446,8 +446,6 @@ def main():
 
             # SAR 분석 UI (온라인 토론 시스템 사용 가능한 경우만 표시)
             if ONLINE_DISCUSSION_AVAILABLE:
-                st.markdown("---")
-                st.subheader("구조-활성 관계 분석 (활성 절벽 탐지)")
                 render_quantitative_analysis_ui(df, available_activity_cols, 'advanced', target_protein_pdb, api_key, llm_provider, selected_patent, cell_line_name)
             else:
                 st.error("온라인 다각도 분석 시스템을 로드할 수 없습니다.")
